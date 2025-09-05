@@ -1,2 +1,2 @@
 # dissy
-Vores finde små projekter i Distribuerede systemer :)
+Vores fine små projekter i Distribuerede systemer :)
