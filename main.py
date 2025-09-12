@@ -24,11 +24,15 @@ def main():
     if args.host:
         print("Starting as host...")
         network_manager.start_as_host()
+        # Add ourselves as the first player
+        game.add_player(network_manager.player_id)
     else:
         print("Discovering games...")
         if not network_manager.discover_and_join():
             print("No games found. Starting as host...")
             network_manager.start_as_host()
+            # Add ourselves as the first player
+            game.add_player(network_manager.player_id)
     
     # Main game loop
     clock = pygame.time.Clock()
@@ -46,13 +50,36 @@ def main():
         # Process network messages
         network_manager.process_messages()
         
+        # Sync players between network and game
+        network_players = network_manager.get_players()
+        for player_id in network_players:
+            if player_id not in game.players:
+                game.add_player(player_id)
+        
+        # Remove disconnected players
+        for player_id in list(game.players.keys()):
+            if player_id not in network_players:
+                game.remove_player(player_id)
+        
         # Update game state (only if we're the leader)
         if network_manager.is_leader:
+            # Get paddle input for this player if we're also playing
+            if network_manager.player_id in game.players:
+                paddle_input = gui.get_paddle_input()
+                network_manager.player_inputs[network_manager.player_id] = paddle_input
+            
             game.update(dt, network_manager.get_player_inputs())
             network_manager.broadcast_game_state(game.get_state())
+        else:
+            # Send our paddle input to leader
+            paddle_input = gui.get_paddle_input()
+            network_manager.send_paddle_input(paddle_input)
         
         # Update GUI with latest game state
-        gui.update(network_manager.get_latest_game_state())
+        if network_manager.is_leader:
+            gui.update(game.get_state())
+        else:
+            gui.update(network_manager.get_latest_game_state())
         gui.render()
     
     # Cleanup

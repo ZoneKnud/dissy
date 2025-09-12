@@ -191,12 +191,23 @@ class NetworkManager:
         """Handle incoming UDP messages."""
         msg_type = message["type"]
         
+        # Ignore messages from ourselves
+        if "data" in message and "playerId" in message["data"] and message["data"]["playerId"] == self.player_id:
+            return
+        if "data" in message and "senderId" in message["data"] and message["data"]["senderId"] == self.player_id:
+            return
+        if "data" in message and "newLeaderId" in message["data"] and message["data"]["newLeaderId"] == self.player_id:
+            return
+        
         if msg_type == "DISCOVERY_REQUEST" and self.is_leader:
             self._handle_discovery_request(message, addr)
         elif msg_type == "PADDLE_INPUT":
             self._handle_paddle_input(message)
         elif msg_type == "GAME_STATE":
             self._handle_game_state(message)
+        elif msg_type == "PLAYER_JOIN" and not self.is_leader:
+            # Only clients should handle PLAYER_JOIN UDP broadcasts
+            self._handle_player_join_broadcast(message)
         elif msg_type == "ELECTION":
             self._handle_election_message(message, addr)
         elif msg_type == "ELECTION_OKAY":
@@ -237,9 +248,9 @@ class NetworkManager:
             "last_heartbeat": time.time()
         }
         
-        print(f"Player {player_id} joined from {player_ip}")
+        print(f"Player {player_id[:8]}... joined from {player_ip}")
         
-        # Notify all other players
+        # Notify all other players (but not ourselves via UDP)
         join_notification = {
             "type": "PLAYER_JOIN",
             "data": {
@@ -248,6 +259,19 @@ class NetworkManager:
             }
         }
         self._broadcast_udp(join_notification)
+    
+    def _handle_player_join_broadcast(self, message: dict):
+        """Handle player join broadcast from leader (clients only)."""
+        player_id = message["data"]["playerId"]
+        player_ip = message["data"]["playerIp"]
+        
+        # Add player to our local list
+        self.players[player_id] = {
+            "ip": player_ip,
+            "last_heartbeat": time.time()
+        }
+        
+        print(f"Player {player_id[:8]}... joined the game")
     
     def _handle_paddle_input(self, message: dict):
         """Handle paddle input from players."""
@@ -327,8 +351,8 @@ class NetworkManager:
             }
             self.udp_socket.sendto(json.dumps(okay_msg).encode(), addr)
             
-            # Start our own election
-            if not self.election_in_progress:
+            # Start our own election only if we're not already leader
+            if not self.election_in_progress and not self.is_leader:
                 self._start_election()
     
     def _handle_election_okay(self, message: dict):

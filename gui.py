@@ -41,12 +41,14 @@ class GameGUI:
     def get_paddle_input(self) -> float:
         """Get paddle input from user (0.0 to 1.0)."""
         # Use mouse Y position or arrow keys
+        paddle_pos = self.mouse_y / self.game.height
+        
         if pygame.K_UP in self.keys_pressed:
-            return max(0.0, self.mouse_y / self.game.height - 0.1)
+            paddle_pos = max(0.0, paddle_pos - 0.01)
         elif pygame.K_DOWN in self.keys_pressed:
-            return min(1.0, self.mouse_y / self.game.height + 0.1)
-        else:
-            return self.mouse_y / self.game.height
+            paddle_pos = min(1.0, paddle_pos + 0.01)
+        
+        return max(0.0, min(1.0, paddle_pos))
     
     def update(self, game_state: Optional[dict]):
         """Update GUI with latest game state."""
