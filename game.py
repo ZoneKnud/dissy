@@ -21,13 +21,14 @@ class PongGame:
         
     def add_player(self, player_id: str):
         """Add a new player to the game."""
-        self.players[player_id] = {
-            "paddle_pos": 0.5,  # Relative position (0-1) along the edge
-            "score": 0
-        }
-        self.scores[player_id] = 0
-        
-        print(f"Game: Added player {player_id[:8]}... Total players: {len(self.players)}")
+        if player_id not in self.players:
+            self.players[player_id] = {
+                "paddle_pos": 0.5,  # Relative position (0-1) along the edge
+                "score": 0
+            }
+            self.scores[player_id] = 0
+            
+            print(f"Game: Added player {player_id[:8]}... Total players: {len(self.players)}")
     
     def remove_player(self, player_id: str):
         """Remove a player from the game."""
@@ -150,14 +151,8 @@ class PongGame:
         if "scores" in state:
             self.scores.update(state["scores"])
         
-        if "players" in state:
-            # Update player data while preserving local player info
-            for player_id, data in state["players"].items():
-                if player_id not in self.players:
-                    self.players[player_id] = data
-                    print(f"Game: Added player from state {player_id[:8]}...")
-                else:
-                    self.players[player_id].update(data)
+        # Don't modify player list from set_state - this should be handled 
+        # by the main game loop to avoid sync issues
     
     def get_paddle_positions(self) -> List[Tuple[float, float, float]]:
         """Get paddle positions for rendering. Returns list of (x, y, angle) tuples."""

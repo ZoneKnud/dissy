@@ -53,15 +53,32 @@ def main():
         # Process network messages
         network_manager.process_messages()
         
-        # Sync players between network and game
-        network_players = network_manager.get_players()
-        for player_id in network_players:
-            if player_id not in game.players:
+        # Sync players between network and game (only for clients using game state)
+        if not network_manager.is_leader:
+            latest_state = network_manager.get_latest_game_state()
+            if latest_state and "players" in latest_state:
+                # For clients, sync from the authoritative game state
+                state_players = set(latest_state["players"].keys())
+                current_players = set(game.players.keys())
+                
+                # Add new players
+                for player_id in state_players - current_players:
+                    game.add_player(player_id)
+                
+                # Remove disconnected players
+                for player_id in current_players - state_players:
+                    game.remove_player(player_id)
+        else:
+            # For leader, sync from network manager
+            network_players = set(network_manager.get_players())
+            current_players = set(game.players.keys())
+            
+            # Add new players
+            for player_id in network_players - current_players:
                 game.add_player(player_id)
-        
-        # Remove disconnected players
-        for player_id in list(game.players.keys()):
-            if player_id not in network_players:
+            
+            # Remove disconnected players  
+            for player_id in current_players - network_players:
                 game.remove_player(player_id)
         
         # Update game state (only if we're the leader)
@@ -73,7 +90,8 @@ def main():
             
             game.update(dt, network_manager.get_player_inputs())
             # Always broadcast game state for synchronization
-            network_manager.broadcast_game_state(game.get_state())
+            current_state = game.get_state()
+            network_manager.broadcast_game_state(current_state)
         else:
             # Send our paddle input to leader
             paddle_input = gui.get_paddle_input()
@@ -81,8 +99,10 @@ def main():
         
         # Update GUI with latest game state
         if network_manager.is_leader:
-            gui.update(game.get_state())
+            # Leader uses their own authoritative game state
+            gui.update(None)  # Don't override with network state
         else:
+            # Clients use the game state from leader
             gui.update(network_manager.get_latest_game_state())
         gui.render()
     

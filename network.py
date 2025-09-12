@@ -85,6 +85,14 @@ class NetworkManager:
                 self.players = {p["id"]: {"ip": p["ip"], "last_heartbeat": time.time()} 
                               for p in response["data"]["players"]}
                 
+                # Add ourselves to the player list
+                self.players[self.player_id] = {
+                    "ip": self.player_ip,
+                    "last_heartbeat": time.time()
+                }
+                
+                print(f"Received player list: {[p[:8] for p in self.players.keys()]}")
+                
                 # Establish TCP connection to leader
                 self._connect_to_leader()
                 
