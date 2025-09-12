@@ -33,6 +33,9 @@ def main():
             network_manager.start_as_host()
             # Add ourselves as the first player
             game.add_player(network_manager.player_id)
+        else:
+            # Add ourselves to the game when joining
+            game.add_player(network_manager.player_id)
     
     # Main game loop
     clock = pygame.time.Clock()
@@ -69,6 +72,7 @@ def main():
                 network_manager.player_inputs[network_manager.player_id] = paddle_input
             
             game.update(dt, network_manager.get_player_inputs())
+            # Always broadcast game state for synchronization
             network_manager.broadcast_game_state(game.get_state())
         else:
             # Send our paddle input to leader

@@ -87,6 +87,11 @@ class NetworkManager:
                 
                 # Establish TCP connection to leader
                 self._connect_to_leader()
+                
+                # Setup proper UDP socket for game communication
+                self.udp_socket.close()
+                self._setup_game_socket()
+                
                 self._start_threads()
                 print(f"Joined game with leader: {self.leader_id}")
                 return True
@@ -114,6 +119,7 @@ class NetworkManager:
             # TCP socket for reliable connections
             self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.tcp_socket.settimeout(1.0)  # Add timeout to prevent hanging
             self.tcp_socket.bind(('', self.GAME_PORT))
             self.tcp_socket.listen(5)
     
@@ -122,6 +128,18 @@ class NetworkManager:
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.udp_socket.bind(('', 0))  # Bind to any available port
+    
+    def _setup_game_socket(self):
+        """Setup UDP socket for game communication after discovery."""
+        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.udp_socket.settimeout(None)  # Remove timeout for game socket
+        self.udp_socket.bind(('', self.GAME_PORT))
+        
+        # Multicast setup
+        mreq = struct.pack("4sl", socket.inet_aton(self.MULTICAST_GROUP), socket.INADDR_ANY)
+        self.udp_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
     
     def _connect_to_leader(self):
         """Connect to the leader via TCP."""
@@ -180,9 +198,15 @@ class NetworkManager:
         while self.running:
             try:
                 conn, addr = self.tcp_socket.accept()
+                conn.settimeout(5.0)  # Set timeout for data read
                 data = conn.recv(1024)
-                message = json.loads(data.decode())
-                self._handle_tcp_message(message, addr, conn)
+                if data:
+                    message = json.loads(data.decode())
+                    self._handle_tcp_message(message, addr, conn)
+                conn.close()
+            except socket.timeout:
+                # Normal timeout, just continue
+                continue
             except Exception as e:
                 if self.running:
                     print(f"TCP listener error: {e}")

@@ -21,36 +21,25 @@ class PongGame:
         
     def add_player(self, player_id: str):
         """Add a new player to the game."""
-        num_players = len(self.players)
-        angle = (2 * math.pi * num_players) / max(3, len(self.players) + 1)
-        
         self.players[player_id] = {
             "paddle_pos": 0.5,  # Relative position (0-1) along the edge
-            "score": 0,
-            "angle": angle
+            "score": 0
         }
         self.scores[player_id] = 0
         
-        # Recalculate angles for all players
-        self._recalculate_player_positions()
+        print(f"Game: Added player {player_id[:8]}... Total players: {len(self.players)}")
     
     def remove_player(self, player_id: str):
         """Remove a player from the game."""
         if player_id in self.players:
             del self.players[player_id]
             del self.scores[player_id]
-            self._recalculate_player_positions()
+            print(f"Game: Removed player {player_id[:8]}... Total players: {len(self.players)}")
     
     def _recalculate_player_positions(self):
         """Recalculate paddle positions based on number of players."""
-        num_players = len(self.players)
-        if num_players < 3:
-            return
-        
-        player_ids = list(self.players.keys())
-        for i, player_id in enumerate(player_ids):
-            angle = (2 * math.pi * i) / num_players
-            self.players[player_id]["angle"] = angle
+        # No longer needed since we calculate positions dynamically
+        pass
     
     def update_paddle_position(self, player_id: str, position: float):
         """Update a player's paddle position."""
@@ -89,11 +78,11 @@ class PongGame:
         center_x = self.width // 2
         center_y = self.height // 2
         
-        for player_id, player_data in self.players.items():
-            angle = player_data["angle"]
+        for i, (player_id, player_data) in enumerate(self.players.items()):
+            # Get paddle position using the same logic as rendering
+            angle = (2 * math.pi * i) / num_players
             paddle_pos = player_data["paddle_pos"]
             
-            # Calculate paddle position based on game geometry
             if num_players == 3:  # Triangle
                 radius = min(self.width, self.height) // 3
             elif num_players == 4:  # Square
@@ -101,27 +90,38 @@ class PongGame:
             else:  # Pentagon, hexagon, etc.
                 radius = min(self.width, self.height) // 3
             
-            # Paddle center position
-            paddle_center_x = center_x + radius * math.cos(angle)
-            paddle_center_y = center_y + radius * math.sin(angle)
+            # Calculate the two vertices of this edge
+            vertex1_angle = angle - math.pi / num_players
+            vertex2_angle = angle + math.pi / num_players
             
-            # Calculate paddle actual position along the edge
-            paddle_normal_x = math.cos(angle + math.pi/2)
-            paddle_normal_y = math.sin(angle + math.pi/2)
+            vertex1_x = center_x + radius * math.cos(vertex1_angle)
+            vertex1_y = center_y + radius * math.sin(vertex1_angle)
+            vertex2_x = center_x + radius * math.cos(vertex2_angle)
+            vertex2_y = center_y + radius * math.sin(vertex2_angle)
             
-            paddle_offset = (paddle_pos - 0.5) * self.paddle_height
-            paddle_x = paddle_center_x + paddle_offset * paddle_normal_x
-            paddle_y = paddle_center_y + paddle_offset * paddle_normal_y
+            # Interpolate along the edge based on paddle_pos
+            paddle_x = vertex1_x + paddle_pos * (vertex2_x - vertex1_x)
+            paddle_y = vertex1_y + paddle_pos * (vertex2_y - vertex1_y)
             
             # Simple collision detection
             dist_to_paddle = math.sqrt((self.ball_pos[0] - paddle_x)**2 + 
                                      (self.ball_pos[1] - paddle_y)**2)
             
             if dist_to_paddle < self.ball_radius + self.paddle_width // 2:
-                # Collision detected - reflect ball
-                # Simple reflection - reverse velocity towards center
-                self.ball_velocity[0] = -self.ball_velocity[0]
-                self.ball_velocity[1] = -self.ball_velocity[1]
+                # Collision detected - reflect ball based on edge normal
+                edge_angle = math.atan2(vertex2_y - vertex1_y, vertex2_x - vertex1_x)
+                normal_angle = edge_angle + math.pi / 2  # Normal to edge
+                
+                # Reflect velocity
+                normal_x = math.cos(normal_angle)
+                normal_y = math.sin(normal_angle)
+                
+                # Dot product of velocity with normal
+                dot_product = self.ball_velocity[0] * normal_x + self.ball_velocity[1] * normal_y
+                
+                # Reflect velocity
+                self.ball_velocity[0] -= 2 * dot_product * normal_x
+                self.ball_velocity[1] -= 2 * dot_product * normal_y
                 break
     
     def get_state(self) -> dict:
@@ -136,6 +136,9 @@ class PongGame:
     
     def set_state(self, state: dict):
         """Set game state from network data."""
+        if not state:
+            return
+            
         if "ballPosition" in state:
             self.ball_pos = [state["ballPosition"]["x"], state["ballPosition"]["y"]]
         
@@ -152,6 +155,7 @@ class PongGame:
             for player_id, data in state["players"].items():
                 if player_id not in self.players:
                     self.players[player_id] = data
+                    print(f"Game: Added player from state {player_id[:8]}...")
                 else:
                     self.players[player_id].update(data)
     
@@ -173,22 +177,28 @@ class PongGame:
         else:  # Pentagon, hexagon, etc.
             radius = min(self.width, self.height) // 3
         
-        for player_data in self.players.values():
-            angle = player_data["angle"]
+        for i, (player_id, player_data) in enumerate(self.players.items()):
+            # Each player gets positioned along their edge of the polygon
+            angle = (2 * math.pi * i) / num_players
             paddle_pos = player_data["paddle_pos"]
             
-            # Paddle center position
-            paddle_center_x = center_x + radius * math.cos(angle)
-            paddle_center_y = center_y + radius * math.sin(angle)
+            # Calculate the two vertices of this edge
+            vertex1_angle = angle - math.pi / num_players
+            vertex2_angle = angle + math.pi / num_players
             
-            # Calculate paddle actual position along the edge
-            paddle_normal_x = math.cos(angle + math.pi/2)
-            paddle_normal_y = math.sin(angle + math.pi/2)
+            vertex1_x = center_x + radius * math.cos(vertex1_angle)
+            vertex1_y = center_y + radius * math.sin(vertex1_angle)
+            vertex2_x = center_x + radius * math.cos(vertex2_angle)
+            vertex2_y = center_y + radius * math.sin(vertex2_angle)
             
-            paddle_offset = (paddle_pos - 0.5) * self.paddle_height
-            paddle_x = paddle_center_x + paddle_offset * paddle_normal_x
-            paddle_y = paddle_center_y + paddle_offset * paddle_normal_y
+            # Interpolate along the edge based on paddle_pos
+            paddle_x = vertex1_x + paddle_pos * (vertex2_x - vertex1_x)
+            paddle_y = vertex1_y + paddle_pos * (vertex2_y - vertex1_y)
             
-            positions.append((paddle_x, paddle_y, angle))
+            # Paddle angle should be perpendicular to the edge (pointing inward)
+            edge_angle = math.atan2(vertex2_y - vertex1_y, vertex2_x - vertex1_x)
+            paddle_angle = edge_angle + math.pi / 2  # Perpendicular to edge
+            
+            positions.append((paddle_x, paddle_y, paddle_angle))
         
         return positions
