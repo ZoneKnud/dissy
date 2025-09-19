@@ -169,6 +169,12 @@ class NetworkedStrikerGame:
             # Re-initialize when players change
             time.sleep(0.1)  # Small delay to ensure network state is updated
             self._initialize_game()
+        elif msg_type == "LEADER_CHANGE":
+            print(f"Leadership changed. New leader: {data.get('newLeaderId', 'unknown')[:8]}")
+            print(f"New player count: {data.get('playerCount', 0)}")
+            # Re-initialize when leadership changes
+            time.sleep(0.1)  # Small delay to ensure network state is updated
+            self._initialize_game()
     
     def _handle_paddle_input(self, data: dict):
         """Handle paddle input from network player"""

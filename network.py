@@ -142,7 +142,7 @@ class NetworkManager:
         self.leader_id = self.player_id
         self.leader_ip = self.local_ip
         
-        # Add self to players list
+        # Add self to players list (or update existing entry)
         self.players[self.player_id] = Player(
             id=self.player_id,
             ip=self.local_ip,
@@ -150,6 +150,17 @@ class NetworkManager:
         )
         
         print(f"Leader established. Players: {len(self.players)}")
+        
+        # Notify game layer about leadership change
+        if self.on_message_callback:
+            leader_change_message = {
+                "type": "LEADER_CHANGE",
+                "data": {
+                    "newLeaderId": self.player_id,
+                    "playerCount": len(self.players)
+                }
+            }
+            self.on_message_callback(leader_change_message, self.local_ip)
     
     def _udp_listener(self):
         """Listen for UDP messages"""
@@ -336,6 +347,13 @@ class NetworkManager:
                 leader = self.players.get(self.leader_id)
                 if leader and time.time() - leader.last_heartbeat > self.HEARTBEAT_TIMEOUT:
                     print("Leader timeout detected, starting election")
+                    # Remove the dead leader from players list
+                    if self.leader_id in self.players:
+                        del self.players[self.leader_id]
+                        print(f"Removed dead leader {self.leader_id[:8]} from players list")
+                    
+                    self.leader_id = None
+                    self.leader_ip = None
                     self._start_election()
     
     def _send_heartbeat(self):
