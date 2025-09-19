@@ -165,6 +165,10 @@ class NetworkManager:
         msg_type = message.get("type")
         data = message.get("data", {})
         
+        # Ignore messages from ourselves
+        if sender_ip == self.local_ip and data.get("playerId") == self.player_id:
+            return
+        
         # Debug output
         if msg_type != MessageType.HEARTBEAT.value and msg_type != MessageType.GAME_STATE.value:
             print(f"Received {msg_type} from {sender_ip}")
@@ -191,6 +195,8 @@ class NetworkManager:
         # Call user callback if provided
         if self.on_message_callback:
             self.on_message_callback(message, sender_ip)
+    
+    def _handle_discovery_request(self, data: dict, sender_ip: str):
         """Handle discovery request from new player"""
         if not self.is_leader:
             return
