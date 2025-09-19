@@ -159,6 +159,11 @@ class NetworkedStrikerGame:
             # Re-initialize when players change
             time.sleep(0.1)  # Small delay to ensure network state is updated
             self._initialize_game()
+        elif msg_type == MessageType.PLAYER_JOIN.value:
+            print(f"Player joined: {data.get('playerId', 'unknown')[:8]}")
+            # Re-initialize when players change
+            time.sleep(0.1)  # Small delay to ensure network state is updated
+            self._initialize_game()
         elif msg_type == MessageType.PLAYER_LEAVE.value:
             print(f"Player left: {data.get('playerId', 'unknown')[:8]}")
             self._initialize_game()
@@ -170,6 +175,9 @@ class NetworkedStrikerGame:
         
         if player_id in self.players:
             self.players[player_id]['paddle_pos'] = paddle_pos
+            # Debug output for leader receiving paddle input
+            if self.network.is_network_leader():
+                print(f"Leader received paddle input from {player_id[:8]}: {paddle_pos}")
     
     def _handle_game_state(self, data: dict):
         """Handle game state update from leader"""
@@ -211,6 +219,8 @@ class NetworkedStrikerGame:
             },
             leader_ip
         )
+        # Debug output for sending paddle input
+        # print(f"Sent paddle input to leader: {self.local_paddle_pos}")
     
     def _broadcast_game_state(self):
         """Broadcast game state to all players (leader only)"""
@@ -229,6 +239,17 @@ class NetworkedStrikerGame:
         
         # Send to all non-leader players
         self.network.send_message(MessageType.GAME_STATE, game_state)
+        
+        # Debug output occasionally 
+        if hasattr(self, '_debug_counter'):
+            self._debug_counter += 1
+        else:
+            self._debug_counter = 0
+        
+        if self._debug_counter % 180 == 0:  # Every 3 seconds at 60fps
+            print(f"Broadcasting game state to {len(self.players)-1} players")
+            for pid, paddle_pos in game_state["paddles"].items():
+                print(f"  Player {pid[:8]}: paddle at {paddle_pos}")
     
     def _update_game_logic(self):
         """Update game logic (leader only)"""

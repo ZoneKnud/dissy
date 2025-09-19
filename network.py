@@ -181,12 +181,16 @@ class NetworkManager:
             self._handle_paddle_input(data, sender_ip)
         elif msg_type == MessageType.GAME_STATE.value:
             self._handle_game_state(data, sender_ip)
+        elif msg_type == MessageType.ELECTION.value:
+            self._handle_election(data, sender_ip)
+        elif msg_type == MessageType.ELECTION_OKAY.value:
+            self._handle_election_okay(data, sender_ip)
+        elif msg_type == MessageType.NEW_LEADER.value:
+            self._handle_new_leader(data, sender_ip)
         
         # Call user callback if provided
         if self.on_message_callback:
             self.on_message_callback(message, sender_ip)
-    
-    def _handle_discovery_request(self, data: dict, sender_ip: str):
         """Handle discovery request from new player"""
         if not self.is_leader:
             return
@@ -217,6 +221,24 @@ class NetworkManager:
             print(f"Discovery response sent to {sender_ip}. Total players: {len(self.players)}")
         except Exception as e:
             print(f"Failed to send discovery response: {e}")
+        
+        # Notify all existing players about the new player
+        player_join_message = {
+            "type": MessageType.PLAYER_JOIN.value,
+            "data": {
+                "playerId": player_id,
+                "playerIp": sender_ip
+            }
+        }
+        
+        # Send to all players except the new one
+        for player in self.players.values():
+            if player.id != player_id:
+                try:
+                    self.udp_socket.sendto(json.dumps(player_join_message).encode(), (player.ip, self.GAME_PORT))
+                    print(f"Player join notification sent to {player.ip}")
+                except Exception as e:
+                    print(f"Failed to send player join notification to {player.ip}: {e}")
     
     def _handle_discovery_response(self, data: dict, sender_ip: str):
         """Handle discovery response from leader"""
@@ -266,6 +288,29 @@ class NetworkManager:
     def _handle_game_state(self, data: dict, sender_ip: str):
         """Handle game state - forward to game callback"""
         pass  # Handled by game callback
+    
+    def _handle_election(self, data: dict, sender_ip: str):
+        """Handle election message"""
+        sender_id = data.get("senderId")
+        
+        # If our ID is higher, send OKAY and start our own election
+        if self.player_id > sender_id:
+            self._send_election_okay(sender_ip)
+            self._start_election()
+    
+    def _handle_election_okay(self, data: dict, sender_ip: str):
+        """Handle election okay response"""
+        if self.election_in_progress:
+            self.election_responses.add(data.get("senderId"))
+    
+    def _handle_new_leader(self, data: dict, sender_ip: str):
+        """Handle new leader announcement"""
+        self.leader_id = data.get("newLeaderId")
+        self.leader_ip = data.get("newLeaderIp")
+        self.is_leader = False
+        self.election_in_progress = False
+        
+        print(f"New leader announced: {self.leader_id[:8]} at {self.leader_ip}")
     
     def _heartbeat_monitor(self):
         """Monitor heartbeats and send them if leader"""
@@ -346,6 +391,18 @@ class NetworkManager:
             self.udp_socket.sendto(json.dumps(message).encode(), (target_ip, self.GAME_PORT))
         except Exception as e:
             print(f"Failed to send election message to {target_ip}: {e}")
+    
+    def _send_election_okay(self, target_ip: str):
+        """Send election okay response"""
+        message = {
+            "type": MessageType.ELECTION_OKAY.value,
+            "data": {"senderId": self.player_id}
+        }
+        
+        try:
+            self.udp_socket.sendto(json.dumps(message).encode(), (target_ip, self.GAME_PORT))
+        except Exception as e:
+            print(f"Failed to send election okay to {target_ip}: {e}")
     
     def _announce_new_leader(self):
         """Announce that this node is the new leader"""
