@@ -80,8 +80,11 @@ class NetworkManager:
         print("Stopping network manager...")
         self.running = False
         
-        # Send leave message if not leader
-        if not self.is_leader and self.leader_ip:
+        # Send leave message to all players if we're leader
+        if self.is_leader:
+            self._send_leader_leaving()
+        # Send leave message to leader if not leader
+        elif self.leader_ip:
             self._send_player_leave()
         
         # Close sockets
@@ -179,6 +182,8 @@ class NetworkManager:
             self._handle_discovery_response(data, sender_ip)
         elif msg_type == MessageType.PLAYER_JOIN.value:
             self._handle_player_join(data, sender_ip)
+        elif msg_type == MessageType.PLAYER_LEAVE.value:
+            self._handle_player_leave(data, sender_ip)
         elif msg_type == MessageType.HEARTBEAT.value:
             self._handle_heartbeat(data, sender_ip)
         elif msg_type == MessageType.PADDLE_INPUT.value:
@@ -444,6 +449,24 @@ class NetworkManager:
             self.udp_socket.sendto(json.dumps(message).encode(), (self.leader_ip, self.GAME_PORT))
         except Exception as e:
             print(f"Failed to send leave message: {e}")
+    
+    def _send_leader_leaving(self):
+        """Send leader leaving message to all players"""
+        message = {
+            "type": MessageType.PLAYER_LEAVE.value,
+            "data": {
+                "playerId": self.player_id
+            }
+        }
+        
+        # Send to all non-leader players
+        for player in self.players.values():
+            if player.id != self.player_id:
+                try:
+                    self.udp_socket.sendto(json.dumps(message).encode(), (player.ip, self.GAME_PORT))
+                    print(f"Leader leaving notification sent to {player.ip}")
+                except Exception as e:
+                    print(f"Failed to send leader leaving notification to {player.ip}: {e}")
     
     def send_message(self, message_type: MessageType, data: dict, target_ip: str = None):
         """Send a message to target or broadcast"""

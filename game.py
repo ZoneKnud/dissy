@@ -166,6 +166,8 @@ class NetworkedStrikerGame:
             self._initialize_game()
         elif msg_type == MessageType.PLAYER_LEAVE.value:
             print(f"Player left: {data.get('playerId', 'unknown')[:8]}")
+            # Re-initialize when players change
+            time.sleep(0.1)  # Small delay to ensure network state is updated
             self._initialize_game()
     
     def _handle_paddle_input(self, data: dict):
