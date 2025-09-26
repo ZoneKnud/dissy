@@ -166,7 +166,10 @@ class NetworkedStrikerGame:
             self._initialize_game()
         elif msg_type == MessageType.PLAYER_LEAVE.value:
             print(f"Player left: {data.get('playerId', 'unknown')[:8]}")
-            # Re-initialize when players change
+            # Remove player and re-initialize
+            player_id = data.get('playerId')
+            if player_id in self.players:
+                del self.players[player_id]
             time.sleep(0.1)  # Small delay to ensure network state is updated
             self._initialize_game()
         elif msg_type == "LEADER_CHANGE":
@@ -186,6 +189,8 @@ class NetworkedStrikerGame:
             # Debug output for leader receiving paddle input
             if self.network.is_network_leader():
                 print(f"Leader received paddle input from {player_id[:8]}: {paddle_pos}")
+        else:
+            print(f"Received paddle input from unknown player: {player_id[:8]}")
     
     def _handle_game_state(self, data: dict):
         """Handle game state update from leader"""
@@ -226,6 +231,15 @@ class NetworkedStrikerGame:
                 "paddlePosition": self.local_paddle_pos
             }
         )
+        
+        # Debug output occasionally
+        if hasattr(self, '_input_debug_counter'):
+            self._input_debug_counter += 1
+        else:
+            self._input_debug_counter = 0
+        
+        if self._input_debug_counter % 90 == 0:  # Every 3 seconds at 30fps
+            print(f"Sending paddle input to leader: {self.local_paddle_pos}")
     
     def _broadcast_game_state(self):
         """Broadcast game state via ZeroMQ PUB socket (leader only)"""

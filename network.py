@@ -68,6 +68,10 @@ class NetworkManager:
         self.election_in_progress = False
         self.election_responses = set()
         
+        # Connection tracking
+        self.subscriber_connected = False
+        self.pusher_connected = False
+        
         print(f"NetworkManager initialized - ID: {self.player_id[:8]}, IP: {self.local_ip}")
         
     def _get_local_ip(self) -> str:
@@ -248,11 +252,14 @@ class NetworkManager:
         print("Subscriber listener started")
         while self.running:
             try:
-                if self.leader_ip and not self.is_leader:
-                    # Connect to leader's publisher
+                if self.leader_ip and not self.is_leader and not self.subscriber_connected:
+                    # Connect to leader's publisher only once
                     sub_address = f"tcp://{self.leader_ip}:{self.BASE_PORT + self.SUB_PORT_OFFSET}"
                     self.subscriber.connect(sub_address)
-                    
+                    self.subscriber_connected = True
+                    print(f"Subscriber connected to {sub_address}")
+                
+                if self.subscriber_connected and not self.is_leader:
                     message_str = self.subscriber.recv_string(zmq.NOBLOCK)
                     message = json.loads(message_str)
                     self._handle_message(message, self.leader_ip)
@@ -364,17 +371,15 @@ class NetworkManager:
                 last_heartbeat=time.time()
             )
         
-        # Connect to leader's publisher for game state
-        if self.leader_ip:
-            sub_address = f"tcp://{self.leader_ip}:{self.BASE_PORT + self.SUB_PORT_OFFSET}"
-            self.subscriber.connect(sub_address)
-            
-            # Connect pusher to leader's puller for input
-            push_address = f"tcp://{self.leader_ip}:{self.BASE_PORT + self.PUSH_PORT_OFFSET}"
-            self.pusher.connect(push_address)
-        
         print(f"Connected to leader: {self.leader_id[:8]} at {self.leader_ip}")
         print(f"Players in network: {len(self.players)}")
+        
+        # Connect pusher to leader's puller for input (but don't connect subscriber here)
+        if self.leader_ip and not self.pusher_connected:
+            push_address = f"tcp://{self.leader_ip}:{self.BASE_PORT + self.PUSH_PORT_OFFSET}"
+            self.pusher.connect(push_address)
+            self.pusher_connected = True
+            print(f"Pusher connected to {push_address}")
     
     def _broadcast_player_join(self, player_id: str, player_ip: str):
         """Broadcast player join message"""
@@ -466,22 +471,29 @@ class NetworkManager:
     
     def _handle_new_leader(self, data: dict, sender_ip: str):
         """Handle new leader announcement"""
+        old_leader_ip = self.leader_ip
+        
         self.leader_id = data.get("newLeaderId")
         self.leader_ip = data.get("newLeaderIp")
         self.is_leader = False
         self.election_in_progress = False
         
-        # Reconnect to new leader
-        if self.leader_ip:
+        # Reconnect to new leader if it's different
+        if old_leader_ip != self.leader_ip:
             # Disconnect from old leader
-            self.subscriber.disconnect(f"tcp://{self.leader_ip}:{self.BASE_PORT + self.SUB_PORT_OFFSET}")
-            self.pusher.disconnect(f"tcp://{self.leader_ip}:{self.BASE_PORT + self.PUSH_PORT_OFFSET}")
+            if old_leader_ip and self.subscriber_connected:
+                try:
+                    self.subscriber.disconnect(f"tcp://{old_leader_ip}:{self.BASE_PORT + self.SUB_PORT_OFFSET}")
+                    self.subscriber_connected = False
+                except:
+                    pass
             
-            # Connect to new leader
-            sub_address = f"tcp://{self.leader_ip}:{self.BASE_PORT + self.SUB_PORT_OFFSET}"
-            push_address = f"tcp://{self.leader_ip}:{self.BASE_PORT + self.PUSH_PORT_OFFSET}"
-            self.subscriber.connect(sub_address)
-            self.pusher.connect(push_address)
+            if old_leader_ip and self.pusher_connected:
+                try:
+                    self.pusher.disconnect(f"tcp://{old_leader_ip}:{self.BASE_PORT + self.PUSH_PORT_OFFSET}")
+                    self.pusher_connected = False
+                except:
+                    pass
         
         print(f"New leader announced: {self.leader_id[:8]} at {self.leader_ip}")
     
@@ -627,15 +639,15 @@ class NetworkManager:
         
         try:
             if message_type == MessageType.PADDLE_INPUT:
-                # Send input via PUSH socket
-                if self.pusher and not self.is_leader:
+                # Send input via PUSH socket (non-leaders only)
+                if self.pusher and not self.is_leader and self.pusher_connected:
                     self.pusher.send_string(json.dumps(message))
             elif message_type == MessageType.GAME_STATE:
-                # Broadcast game state via PUB socket
+                # Broadcast game state via PUB socket (leaders only)
                 if self.publisher and self.is_leader:
                     self.publisher.send_string(json.dumps(message))
             else:
-                # Use publisher for other broadcasts
+                # Use publisher for other broadcasts (leaders only)
                 if self.publisher and self.is_leader:
                     self.publisher.send_string(json.dumps(message))
                     
