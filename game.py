@@ -31,7 +31,7 @@ class NetworkedStrikerGame:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption("Networked Pong")
+        pygame.display.set_caption("Networked Pong - ZeroMQ")
         self.clock = pygame.time.Clock()
         
         # Network setup
@@ -60,16 +60,16 @@ class NetworkedStrikerGame:
         
     def start(self):
         """Start the game and network"""
-        print("Starting networked Pong game...")
+        print("Starting networked Pong game with ZeroMQ...")
         self.running = True
         
         # Start network
         self.network.start()
         
-        # Wait a bit for network discovery
-        time.sleep(3)
+        # Wait longer for ZeroMQ discovery
+        time.sleep(5)
         
-        print(f"Network status:")
+        print(f"ZeroMQ Network status:")
         print(f"  Player ID: {self.network.player_id[:8]}")
         print(f"  Local IP: {self.network.local_ip}")
         print(f"  Is Leader: {self.network.is_network_leader()}")
@@ -210,7 +210,7 @@ class NetworkedStrikerGame:
                 self.players[player_id]['score'] = score
     
     def _send_paddle_input(self):
-        """Send local paddle input to leader"""
+        """Send local paddle input to leader via ZeroMQ PUSH socket"""
         if self.network.is_network_leader():
             return  # Leader handles input locally
             
@@ -218,20 +218,17 @@ class NetworkedStrikerGame:
         if not leader_ip:
             return
         
-        # Send paddle position
+        # Send paddle position via PUSH socket
         self.network.send_message(
             MessageType.PADDLE_INPUT,
             {
                 "playerId": self.network.player_id,
                 "paddlePosition": self.local_paddle_pos
-            },
-            leader_ip
+            }
         )
-        # Debug output for sending paddle input
-        # print(f"Sent paddle input to leader: {self.local_paddle_pos}")
     
     def _broadcast_game_state(self):
-        """Broadcast game state to all players (leader only)"""
+        """Broadcast game state via ZeroMQ PUB socket (leader only)"""
         if not self.network.is_network_leader():
             return
             
@@ -245,7 +242,7 @@ class NetworkedStrikerGame:
             "scores": {pid: p['score'] for pid, p in self.players.items()}
         }
         
-        # Send to all non-leader players
+        # Broadcast via PUB socket
         self.network.send_message(MessageType.GAME_STATE, game_state)
         
         # Debug output occasionally 
@@ -352,16 +349,19 @@ class NetworkedStrikerGame:
                          (int(self.ball_pos[0]), int(self.ball_pos[1])), 
                          self.ball_radius)
         
-        # Draw network info
+        # Draw network info with ZeroMQ indication
         info_lines = [
             f"Players: {len(self.players)}",
             f"Leader: {'Yes' if self.network.is_network_leader() else 'No'}",
             f"Player: {self.network.player_id[:8]}",
-            f"IP: {self.network.local_ip}"
+            f"IP: {self.network.local_ip}",
+            "Transport: ZeroMQ"
         ]
         
         for i, line in enumerate(info_lines):
             color = GREEN if i == 1 and self.network.is_network_leader() else WHITE
+            if i == 4:  # ZeroMQ indicator
+                color = CYAN
             text = font20.render(line, True, color)
             self.screen.blit(text, (10, 10 + i * 25))
         
