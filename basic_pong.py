@@ -175,6 +175,179 @@ class NetworkDiscovery:
         if hasattr(self, 'listen_thread'):
             self.listen_thread.join(timeout=1.0)
 
+class LeaderElection:
+    def __init__(self, my_ip, election_port=5557):
+        self.my_ip = my_ip
+        self.election_port = election_port
+        self.running = False
+        self.is_coordinator = False
+        self.higher_nodes = []
+        self.all_nodes = []
+        self.coordinator_ip = None
+        
+    def get_ip_as_int(self, ip_str):
+        """Convert IP string to integer for comparison"""
+        try:
+            return struct.unpack("!I", socket.inet_aton(ip_str))[0]
+        except:
+            return 0
+    
+    def start_election(self, known_nodes):
+        """Start bully election algorithm"""
+        print(f"Starting leader election from {self.my_ip}")
+        self.all_nodes = known_nodes.copy()
+        my_ip_int = self.get_ip_as_int(self.my_ip)
+        
+        # Find nodes with higher IPs
+        self.higher_nodes = [node for node in self.all_nodes 
+                           if self.get_ip_as_int(node) > my_ip_int]
+        
+        if not self.higher_nodes:
+            # I have the highest IP, become coordinator
+            self.become_coordinator()
+            return True
+        
+        # Send ELECTION message to higher nodes
+        self.running = True
+        responses = self.send_election_messages()
+        
+        if not responses:
+            # No responses from higher nodes, become coordinator
+            self.become_coordinator()
+            return True
+        
+        # Wait for COORDINATOR message
+        coordinator = self.wait_for_coordinator()
+        if coordinator:
+            self.coordinator_ip = coordinator
+            return False
+        else:
+            # No coordinator announced, become coordinator
+            self.become_coordinator()
+            return True
+    
+    def send_election_messages(self):
+        """Send ELECTION messages to higher nodes"""
+        responses = []
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(2.0)  # 2 second timeout
+        
+        for node_ip in self.higher_nodes:
+            try:
+                message = {
+                    "type": "ELECTION",
+                    "from_ip": self.my_ip,
+                    "timestamp": time.time()
+                }
+                message_bytes = json.dumps(message).encode()
+                sock.sendto(message_bytes, (node_ip, self.election_port))
+                
+                # Wait for OK response
+                try:
+                    data, addr = sock.recvfrom(1024)
+                    response = json.loads(data.decode())
+                    if response.get("type") == "OK":
+                        responses.append(addr[0])
+                        print(f"Received OK from {addr[0]}")
+                except socket.timeout:
+                    print(f"No response from {node_ip}")
+                    
+            except Exception as e:
+                print(f"Failed to send election to {node_ip}: {e}")
+        
+        sock.close()
+        return responses
+    
+    def wait_for_coordinator(self, timeout=5):
+        """Wait for COORDINATOR message"""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.settimeout(timeout)
+        
+        try:
+            sock.bind(('', self.election_port))
+            
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                try:
+                    data, addr = sock.recvfrom(1024)
+                    message = json.loads(data.decode())
+                    
+                    if message.get("type") == "COORDINATOR":
+                        coordinator_ip = message.get("coordinator_ip")
+                        print(f"New coordinator announced: {coordinator_ip}")
+                        sock.close()
+                        return coordinator_ip
+                        
+                except socket.timeout:
+                    continue
+                    
+        except Exception as e:
+            print(f"Error waiting for coordinator: {e}")
+        
+        sock.close()
+        return None
+    
+    def become_coordinator(self):
+        """Become the new coordinator and announce to all nodes"""
+        self.is_coordinator = True
+        self.coordinator_ip = self.my_ip
+        print(f"Becoming new coordinator: {self.my_ip}")
+        
+        # Announce to all other nodes
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        
+        for node_ip in self.all_nodes:
+            if node_ip != self.my_ip:
+                try:
+                    message = {
+                        "type": "COORDINATOR",
+                        "coordinator_ip": self.my_ip,
+                        "timestamp": time.time()
+                    }
+                    message_bytes = json.dumps(message).encode()
+                    sock.sendto(message_bytes, (node_ip, self.election_port))
+                    print(f"Announced coordinator to {node_ip}")
+                except Exception as e:
+                    print(f"Failed to announce to {node_ip}: {e}")
+        
+        sock.close()
+    
+    def handle_election_messages(self):
+        """Handle incoming election messages"""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.settimeout(1.0)
+        
+        try:
+            sock.bind(('', self.election_port))
+            
+            while self.running:
+                try:
+                    data, addr = sock.recvfrom(1024)
+                    message = json.loads(data.decode())
+                    
+                    if message.get("type") == "ELECTION":
+                        # Respond with OK
+                        ok_response = {"type": "OK", "from_ip": self.my_ip}
+                        sock.sendto(json.dumps(ok_response).encode(), addr)
+                        
+                        # Start my own election
+                        threading.Thread(target=self.start_election, 
+                                       args=(self.all_nodes,)).start()
+                        
+                except socket.timeout:
+                    continue
+                    
+        except Exception as e:
+            print(f"Error handling election messages: {e}")
+        
+        sock.close()
+    
+    def stop(self):
+        """Stop election process"""
+        self.running = False
+
 class NetworkManager:
     def __init__(self, is_leader=True, leader_port=5555, leader_ip="127.0.0.1", discovery=None):
         self.context = zmq.Context()
@@ -186,11 +359,26 @@ class NetworkManager:
         self.game_state = None
         self.running = True
         self.discovery = discovery
+        self.known_players = {}  # Track all known player IPs
+        self.my_ip = self.get_my_ip()
+        self.election = LeaderElection(self.my_ip)
+        self.leader_disconnected = False
         
         if is_leader:
             self.setup_leader()
         else:
             self.setup_follower()
+    
+    def get_my_ip(self):
+        """Get local IP address"""
+        try:
+            temp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            temp_sock.connect(("8.8.8.8", 80))
+            my_ip = temp_sock.getsockname()[0]
+            temp_sock.close()
+            return my_ip
+        except:
+            return "127.0.0.1"
     
     def setup_leader(self):
         self.socket = self.context.socket(zmq.ROUTER)
@@ -201,6 +389,12 @@ class NetworkManager:
         # Start network discovery broadcasting
         if self.discovery:
             self.discovery.start_leader_broadcast()
+        
+        # Start election message handler
+        self.election.running = True
+        self.election_thread = threading.Thread(target=self.election.handle_election_messages)
+        self.election_thread.daemon = True
+        self.election_thread.start()
         
         # Start network thread
         self.network_thread = threading.Thread(target=self.leader_network_loop)
@@ -216,6 +410,12 @@ class NetworkManager:
         # Send join request
         self.send_message({"type": "join", "player_id": self.player_id})
         print(f"Connecting to leader at {self.leader_ip}:{self.leader_port}")
+        
+        # Start election message handler
+        self.election.running = True
+        self.election_thread = threading.Thread(target=self.election.handle_election_messages)
+        self.election_thread.daemon = True
+        self.election_thread.start()
         
         # Start network thread
         self.network_thread = threading.Thread(target=self.follower_network_loop)
@@ -244,10 +444,14 @@ class NetworkManager:
             time.sleep(0.001)  # Small delay to prevent busy waiting
     
     def follower_network_loop(self):
+        consecutive_failures = 0
+        max_failures = 10  # Allow some network hiccups
+        
         while self.running:
             try:
                 message = self.socket.recv(zmq.NOBLOCK)
                 data = json.loads(message.decode())
+                consecutive_failures = 0  # Reset failure counter
                 
                 if data["type"] == "game_state":
                     self.game_state = data["state"]
@@ -256,25 +460,41 @@ class NetworkManager:
                     print(f"Assigned as player {self.my_player_index + 1}")
                     
             except zmq.Again:
-                pass  # No message received
+                consecutive_failures += 1
+                if consecutive_failures > max_failures:
+                    # Leader might be disconnected
+                    if not self.leader_disconnected:
+                        print("Leader appears to be disconnected. Starting election...")
+                        self.leader_disconnected = True
+                        self.start_leader_election()
+                        break
             except Exception as e:
                 print(f"Follower network error: {e}")
+                consecutive_failures += 1
             
             time.sleep(0.001)
     
     def handle_player_join(self, player_id, data):
         if player_id not in self.connected_players:
             player_index = len(self.connected_players)
+            player_ip = data.get("player_ip", "unknown")
+            
             self.connected_players[player_id] = {
                 "index": player_index,
-                "movement": 0
+                "movement": 0,
+                "ip": player_ip
             }
-            print(f"Player {player_id} joined as player {player_index + 1}")
             
-            # Send player assignment
+            # Track known players for election
+            self.known_players[player_ip] = player_id
+            
+            print(f"Player {player_id} joined as player {player_index + 1} from {player_ip}")
+            
+            # Send player assignment with known players list
             response = {
                 "type": "player_assigned",
-                "player_index": player_index
+                "player_index": player_index,
+                "known_players": list(self.known_players.keys())
             }
             self.socket.send_multipart([player_id.encode(), json.dumps(response).encode()])
     
@@ -288,6 +508,9 @@ class NetworkManager:
             print(f"Player {player_id} disconnected")
     
     def send_message(self, data):
+        # Add my IP to messages for tracking
+        data["player_ip"] = self.my_ip
+        
         if self.is_leader:
             # Broadcast to all followers
             for player_id in self.connected_players:
@@ -335,8 +558,11 @@ class NetworkManager:
     
     def cleanup(self):
         self.running = False
+        self.election.stop()
         if hasattr(self, 'network_thread'):
             self.network_thread.join(timeout=1.0)
+        if hasattr(self, 'election_thread'):
+            self.election_thread.join(timeout=1.0)
         if self.discovery:
             self.discovery.stop()
         self.socket.close()
