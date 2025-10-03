@@ -867,39 +867,38 @@ def main():
                     scores = [0] * len(scores)
                     ball.reset(field)
                 
-                # Player movement
+                # Player movement - Fixed logic
                 if is_leader:
-                    player_index = 0  # Leader is always player 0
+                    # Leader always uses W/S keys and controls player 0
+                    if event.key == pygame.K_w:  # W key
+                        movements[0] = -1
+                    elif event.key == pygame.K_s:  # S key
+                        movements[0] = 1
                 else:
+                    # Followers use their assigned keys
                     player_index = my_player_index
-                
-                if 0 <= player_index < len(player_keys):
-                    if event.key == player_keys[player_index][0]:  # Up/Left key
-                        movements[player_index] = -1
-                        if not is_leader:
+                    if 0 <= player_index < len(player_keys):
+                        if event.key == player_keys[player_index][0]:  # Up/Left key
                             network.send_input(-1)
-                    elif event.key == player_keys[player_index][1]:  # Down/Right key
-                        movements[player_index] = 1
-                        if not is_leader:
+                        elif event.key == player_keys[player_index][1]:  # Down/Right key
                             network.send_input(1)
             
             if event.type == pygame.KEYUP:
                 if is_leader:
-                    player_index = 0
+                    # Leader stops movement
+                    if event.key == pygame.K_w or event.key == pygame.K_s:
+                        movements[0] = 0
                 else:
+                    # Followers stop movement
                     player_index = my_player_index
-                
-                if 0 <= player_index < len(player_keys):
-                    if event.key in player_keys[player_index]:
-                        movements[player_index] = 0
-                        if not is_leader:
+                    if 0 <= player_index < len(player_keys):
+                        if event.key in player_keys[player_index]:
                             network.send_input(0)
-        
+
         # Leader game logic
         if is_leader:
             # Check for new players and adjust game
             total_players = network.get_player_count()
-            # Only force minimum 2 players if there are actually followers connected
             current_num_players = max(1, total_players) if total_players == 1 else max(2, total_players)
             
             if current_num_players != last_num_players:
@@ -907,13 +906,14 @@ def main():
                 field, players, ball, scores = setup_game(current_num_players, scores)
                 last_num_players = current_num_players
             
-            # Get movements from network
+            # Get movements from network (followers only)
             network_movements = network.get_player_movements()
-            for i, movement in enumerate(network_movements):
+            # Apply network movements starting from index 1 (followers)
+            for i, movement in enumerate(network_movements[1:], start=1):  # Skip index 0 (leader)
                 if i < len(movements):
                     movements[i] = movement
             
-            # Update game objects
+            # Update all players (leader's movement is already in movements[0])
             for i, player in enumerate(players):
                 if i < len(movements):
                     player.update(movements[i], dt)
@@ -992,11 +992,11 @@ def main():
         for i, player in enumerate(players):
             player.display()
             # Highlight current player
-            if i == my_player_index:
+            if (is_leader and i == 0) or (not is_leader and i == my_player_index):
                 # Draw a small circle above the paddle to indicate it's controlled by this client
                 if hasattr(player, 'x') and hasattr(player, 'y'):
                     pygame.draw.circle(screen, WHITE, (int(player.x), int(player.y - 20)), 5)
-        
+
         # Only draw ball if we have at least 2 players
         if current_num_players >= 2 or not is_leader:
             ball.display()
@@ -1023,13 +1023,22 @@ def main():
             screen.blit(player_count_text, (10, HEIGHT - 60))
             reset_text = font16.render("Press SPACE to reset scores", True, WHITE)
             screen.blit(reset_text, (10, HEIGHT - 40))
+            # Show leader controls
+            controls_text = font16.render("Leader: W/S to move", True, WHITE)
+            screen.blit(controls_text, (10, HEIGHT - 20))
         else:
+            # Show follower info and controls
             my_player_text = font16.render(f"You are Player {my_player_index + 1}", True, WHITE)
             screen.blit(my_player_text, (10, HEIGHT - 60))
-        
-        connection_text = font16.render(f"Network: {'Active' if (is_leader and network.get_player_count() > 1) or (not is_leader and hasattr(network, 'game_state')) else 'Waiting...'}", True, GREEN if (is_leader and network.get_player_count() > 1) or (not is_leader and hasattr(network, 'game_state')) else RED)
-        screen.blit(connection_text, (10, HEIGHT - 20))
-        
+            if my_player_index < len(player_keys):
+                up_key = pygame.key.name(player_keys[my_player_index][0]).upper()
+                down_key = pygame.key.name(player_keys[my_player_index][1]).upper()
+                controls_text = font16.render(f"Controls: {up_key}/{down_key} to move", True, WHITE)
+                screen.blit(controls_text, (10, HEIGHT - 40))
+            
+            connection_text = font16.render(f"Network: {'Active' if hasattr(network, 'game_state') else 'Connecting...'}", True, GREEN if hasattr(network, 'game_state') else RED)
+            screen.blit(connection_text, (10, HEIGHT - 20))
+
         pygame.display.update()
     
     # Cleanup
