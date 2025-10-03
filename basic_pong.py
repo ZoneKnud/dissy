@@ -724,39 +724,51 @@ def main():
     parser.add_argument('--port', type=int, default=5555, help='Game port number (default: 5555)')
     parser.add_argument('--discovery-port', type=int, default=5556, help='Discovery port number (default: 5556)')
     parser.add_argument('--no-discovery', action='store_true', help='Disable automatic network discovery')
-    parser.add_argument('--discovery-timeout', type=int, default=10, help='Discovery timeout in seconds (default: 10)')
+    parser.add_argument('--discovery-timeout', type=int, default=5, help='Discovery timeout in seconds (default: 5)')
+    parser.add_argument('--leader', action='store_true', help='Force start as leader (skip discovery)')
     args = parser.parse_args()
     
     # Initialize network discovery
     discovery = None if args.no_discovery else NetworkDiscovery(args.port, args.discovery_port)
     
     # Determine if this is leader or follower
-    is_leader = args.join is None
-    leader_ip = args.join if args.join else "127.0.0.1"
+    is_leader = False
+    leader_ip = "127.0.0.1"
     
-    if not is_leader and not args.join and discovery:
-        # Auto-discover leader
-        print("Searching for game leaders on the network...")
-        discovered_leaders = discovery.start_discovery_listener(args.discovery_timeout)
-        
-        if discovered_leaders:
+    if args.leader:
+        # Force leader mode
+        is_leader = True
+        print("Starting as leader (forced)")
+    elif args.join:
+        # Manual join mode
+        is_leader = False
+        leader_ip = args.join
+        print(f"Connecting to specified leader at {args.join}:{args.port}")
+    else:
+        # Auto-discovery mode
+        if discovery:
+            print("Searching for game leaders on the network...")
+            discovered_leaders = discovery.start_discovery_listener(args.discovery_timeout)
+            
             best_leader = discovery.get_best_leader()
             if best_leader:
+                # Found a leader, join it
+                is_leader = False
                 leader_ip = best_leader["ip"]
                 leader_port = best_leader["port"]
-                print(f"Found leader at {leader_ip}:{leader_port}")
+                print(f"Found leader at {leader_ip}:{leader_port}, joining as follower...")
                 
                 # Update port if leader uses different port
                 if leader_port != args.port:
                     args.port = leader_port
             else:
-                print("No active leaders found. Starting as leader...")
+                # No leader found, become leader
                 is_leader = True
+                print("No leaders discovered. Starting as leader...")
         else:
-            print("No leaders discovered. Starting as leader...")
+            # Discovery disabled, become leader
             is_leader = True
-    elif not is_leader and args.join:
-        print(f"Connecting to specified leader at {args.join}:{args.port}")
+            print("Discovery disabled. Starting as leader...")
     
     # Initialize network
     network = NetworkManager(is_leader=is_leader, leader_port=args.port, leader_ip=leader_ip, discovery=discovery)
@@ -792,7 +804,7 @@ def main():
             else:
                 if i < len(field.walls):
                     wall_start, wall_end = field.walls[i]
-                    wall_angle = math.atan2(wall_end[1] - wall_start[1], wall_end[0] - wall_start[0])  # Fixed typo: wallEnd -> wall_end
+                    wall_angle = math.atan2(wall_end[1] - wall_start[1], wall_end[0] - wall_start[0])  # Fixed typo
                     normal_angle = wall_angle + math.pi/2
                     player.set_wall_info(wall_start, wall_end, wall_angle, normal_angle)
             players.append(player)
@@ -823,7 +835,7 @@ def main():
     current_num_players = 1 if is_leader else 2  # Leader starts with 1 player
     field, players, ball, scores = setup_game(current_num_players)
     movements = [0] * 8  # Support up to 8 players
-    my_player_index = 0 if is_leader else getattr(network, 'my_player_index', 1)
+    my_player_index = 0 if is_leader else 1  # Default to 1 for followers, will be updated when assigned
     last_num_players = current_num_players
     
     print(f"Started as {'leader' if is_leader else 'follower'}")
@@ -831,6 +843,7 @@ def main():
         print("Waiting for other players to join...")
         if not args.no_discovery:
             print("Broadcasting presence for automatic discovery...")
+        print(f"Other players can join by running: python basic_pong.py")
         print(f"Manual connection: python basic_pong.py --join {leader_ip} --port {args.port}")
     
     while running:
@@ -838,6 +851,10 @@ def main():
         dt = min(dt, 1/30.0)
         
         screen.fill(BLACK)
+        
+        # Update my_player_index for followers when it gets assigned
+        if not is_leader and hasattr(network, 'my_player_index'):
+            my_player_index = network.my_player_index + 1  # +1 because leader is 0
         
         # Handle events
         for event in pygame.event.get():
@@ -854,7 +871,7 @@ def main():
                 if is_leader:
                     player_index = 0  # Leader is always player 0
                 else:
-                    player_index = getattr(network, 'my_player_index', -1)
+                    player_index = my_player_index
                 
                 if 0 <= player_index < len(player_keys):
                     if event.key == player_keys[player_index][0]:  # Up/Left key
@@ -870,7 +887,7 @@ def main():
                 if is_leader:
                     player_index = 0
                 else:
-                    player_index = getattr(network, 'my_player_index', -1)
+                    player_index = my_player_index
                 
                 if 0 <= player_index < len(player_keys):
                     if event.key in player_keys[player_index]:
@@ -1007,7 +1024,7 @@ def main():
             reset_text = font16.render("Press SPACE to reset scores", True, WHITE)
             screen.blit(reset_text, (10, HEIGHT - 40))
         else:
-            my_player_text = font16.render(f"You are Player {getattr(network, 'my_player_index', 0) + 1}", True, WHITE)
+            my_player_text = font16.render(f"You are Player {my_player_index + 1}", True, WHITE)
             screen.blit(my_player_text, (10, HEIGHT - 60))
         
         connection_text = font16.render(f"Network: {'Active' if (is_leader and network.get_player_count() > 1) or (not is_leader and hasattr(network, 'game_state')) else 'Waiting...'}", True, GREEN if (is_leader and network.get_player_count() > 1) or (not is_leader and hasattr(network, 'game_state')) else RED)
