@@ -27,6 +27,7 @@ PURPLE = (255, 0, 255)
 GRAY = (128, 128, 128)
 ORANGE = (255, 165, 0)
 CYAN = (0, 255, 255)
+GOLD = (255, 215, 0)  # Gold color for player indicator
 
 # Get screen info and calculate maximum square size
 screen_info = pygame.display.Info()
@@ -424,6 +425,7 @@ class Striker:
         self.width = width
         self.height = height
         self.speed = speed
+        self.original_color = color  # Store original color
         self.color = color
         self.player_id = player_id
         self.wall_start = None
@@ -488,9 +490,48 @@ class Striker:
                 self.field_pos = max(0.1, min(0.9, self.field_pos))
             self.update_position()
     
-    def display(self):
+    def display(self, is_my_player=False):
+        """Display paddle with gold backing if it's the current player's paddle"""
         if len(self.corners) >= 4:
-            pygame.draw.polygon(screen, self.color, self.corners)
+            # If this is my player, draw a gold backing first (slightly larger)
+            if is_my_player:
+                self.draw_gold_backing()
+            
+            # Draw the main paddle in its original color
+            pygame.draw.polygon(screen, self.original_color, self.corners)
+    
+    def draw_gold_backing(self):
+        """Draw a gold backing behind the paddle"""
+        if self.wall_start is None:  # 2-player mode
+            # Create a slightly larger rectangle behind the paddle
+            backing_width = self.width + 4
+            backing_height = self.height + 4
+            backing_x = self.x - 2
+            backing_y = self.y - 2
+            
+            backing_corners = [
+                (backing_x, backing_y),
+                (backing_x + backing_width, backing_y),
+                (backing_x + backing_width, backing_y + backing_height),
+                (backing_x, backing_y + backing_height)
+            ]
+            pygame.draw.polygon(screen, GOLD, backing_corners)
+        else:  # Polygon mode
+            # Create slightly larger polygon behind the paddle
+            cos_a = math.cos(self.wall_angle)
+            sin_a = math.sin(self.wall_angle)
+            
+            # Make backing slightly larger
+            hw, hh = (self.height + 4)/2, (self.width + 4)/2
+            corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+            
+            backing_corners = []
+            for cx, cy in corners:
+                rx = cx * cos_a - cy * sin_a + self.x
+                ry = cx * sin_a + cy * cos_a + self.y
+                backing_corners.append((rx, ry))
+            
+            pygame.draw.polygon(screen, GOLD, backing_corners)
     
     def get_rect(self):
         return self.rect
@@ -776,18 +817,6 @@ def main():
     running = True
     colors = [GREEN, RED, BLUE, YELLOW, PURPLE, ORANGE, CYAN, WHITE]
     
-    # Control keys for each player
-    player_keys = [
-        (pygame.K_w, pygame.K_s),      # Player 1: W/S
-        (pygame.K_UP, pygame.K_DOWN),  # Player 2: UP/DOWN
-        (pygame.K_t, pygame.K_g),      # Player 3: T/G
-        (pygame.K_i, pygame.K_k),      # Player 4: I/K
-        (pygame.K_r, pygame.K_f),      # Player 5: R/F
-        (pygame.K_u, pygame.K_j),      # Player 6: U/J
-        (pygame.K_o, pygame.K_l),      # Player 7: O/L
-        (pygame.K_p, pygame.K_SEMICOLON) # Player 8: P/;
-    ]
-    
     def setup_game(num_players, existing_scores=None):
         field = GameField(num_players)
         
@@ -867,33 +896,25 @@ def main():
                     scores = [0] * len(scores)
                     ball.reset(field)
                 
-                # Player movement - Fixed logic
-                if is_leader:
-                    # Leader always uses W/S keys and controls player 0
-                    if event.key == pygame.K_w:  # W key
-                        movements[0] = -1
-                    elif event.key == pygame.K_s:  # S key
-                        movements[0] = 1
-                else:
-                    # Followers use their assigned keys
-                    player_index = my_player_index
-                    if 0 <= player_index < len(player_keys):
-                        if event.key == player_keys[player_index][0]:  # Up/Left key
-                            network.send_input(-1)
-                        elif event.key == player_keys[player_index][1]:  # Down/Right key
-                            network.send_input(1)
+                # Player movement - ALL players use arrow keys
+                if event.key == pygame.K_UP:  # UP arrow
+                    if is_leader:
+                        movements[0] = -1  # Leader controls player 0
+                    else:
+                        network.send_input(-1)  # Follower sends to network
+                elif event.key == pygame.K_DOWN:  # DOWN arrow
+                    if is_leader:
+                        movements[0] = 1  # Leader controls player 0
+                    else:
+                        network.send_input(1)  # Follower sends to network
             
             if event.type == pygame.KEYUP:
-                if is_leader:
-                    # Leader stops movement
-                    if event.key == pygame.K_w or event.key == pygame.K_s:
-                        movements[0] = 0
-                else:
-                    # Followers stop movement
-                    player_index = my_player_index
-                    if 0 <= player_index < len(player_keys):
-                        if event.key in player_keys[player_index]:
-                            network.send_input(0)
+                # Stop movement when arrow keys are released
+                if event.key == pygame.K_UP or event.key == pygame.K_DOWN:
+                    if is_leader:
+                        movements[0] = 0  # Leader stops
+                    else:
+                        network.send_input(0)  # Follower stops
 
         # Leader game logic
         if is_leader:
@@ -990,12 +1011,9 @@ def main():
         field.draw_walls()
         
         for i, player in enumerate(players):
-            player.display()
-            # Highlight current player
-            if (is_leader and i == 0) or (not is_leader and i == my_player_index):
-                # Draw a small circle above the paddle to indicate it's controlled by this client
-                if hasattr(player, 'x') and hasattr(player, 'y'):
-                    pygame.draw.circle(screen, WHITE, (int(player.x), int(player.y - 20)), 5)
+            # Determine if this is the current player's paddle
+            is_my_player = (is_leader and i == 0) or (not is_leader and i == my_player_index)
+            player.display(is_my_player)
 
         # Only draw ball if we have at least 2 players
         if current_num_players >= 2 or not is_leader:
@@ -1023,18 +1041,15 @@ def main():
             screen.blit(player_count_text, (10, HEIGHT - 60))
             reset_text = font16.render("Press SPACE to reset scores", True, WHITE)
             screen.blit(reset_text, (10, HEIGHT - 40))
-            # Show leader controls
-            controls_text = font16.render("Leader: W/S to move", True, WHITE)
+            # Show universal controls
+            controls_text = font16.render("Controls: UP/DOWN arrows to move", True, WHITE)
             screen.blit(controls_text, (10, HEIGHT - 20))
         else:
-            # Show follower info and controls
+            # Show follower info and universal controls
             my_player_text = font16.render(f"You are Player {my_player_index + 1}", True, WHITE)
             screen.blit(my_player_text, (10, HEIGHT - 60))
-            if my_player_index < len(player_keys):
-                up_key = pygame.key.name(player_keys[my_player_index][0]).upper()
-                down_key = pygame.key.name(player_keys[my_player_index][1]).upper()
-                controls_text = font16.render(f"Controls: {up_key}/{down_key} to move", True, WHITE)
-                screen.blit(controls_text, (10, HEIGHT - 40))
+            controls_text = font16.render("Controls: UP/DOWN arrows to move", True, WHITE)
+            screen.blit(controls_text, (10, HEIGHT - 40))
             
             connection_text = font16.render(f"Network: {'Active' if hasattr(network, 'game_state') else 'Connecting...'}", True, GREEN if hasattr(network, 'game_state') else RED)
             screen.blit(connection_text, (10, HEIGHT - 20))
