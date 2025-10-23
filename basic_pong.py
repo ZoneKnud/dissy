@@ -27,7 +27,7 @@ PURPLE = (255, 0, 255)
 GRAY = (128, 128, 128)
 ORANGE = (255, 165, 0)
 CYAN = (0, 255, 255)
-GOLD = (255, 215, 0)  # Gold color for player indicator
+GOLD = (255, 215, 0)  # Gold color for border
 
 # Get screen info and calculate maximum square size
 screen_info = pygame.display.Info()
@@ -175,179 +175,6 @@ class NetworkDiscovery:
         if hasattr(self, 'listen_thread'):
             self.listen_thread.join(timeout=1.0)
 
-class LeaderElection:
-    def __init__(self, my_ip, election_port=5557):
-        self.my_ip = my_ip
-        self.election_port = election_port
-        self.running = False
-        self.is_coordinator = False
-        self.higher_nodes = []
-        self.all_nodes = []
-        self.coordinator_ip = None
-        
-    def get_ip_as_int(self, ip_str):
-        """Convert IP string to integer for comparison"""
-        try:
-            return struct.unpack("!I", socket.inet_aton(ip_str))[0]
-        except:
-            return 0
-    
-    def start_election(self, known_nodes):
-        """Start bully election algorithm"""
-        print(f"Starting leader election from {self.my_ip}")
-        self.all_nodes = known_nodes.copy()
-        my_ip_int = self.get_ip_as_int(self.my_ip)
-        
-        # Find nodes with higher IPs
-        self.higher_nodes = [node for node in self.all_nodes 
-                           if self.get_ip_as_int(node) > my_ip_int]
-        
-        if not self.higher_nodes:
-            # I have the highest IP, become coordinator
-            self.become_coordinator()
-            return True
-        
-        # Send ELECTION message to higher nodes
-        self.running = True
-        responses = self.send_election_messages()
-        
-        if not responses:
-            # No responses from higher nodes, become coordinator
-            self.become_coordinator()
-            return True
-        
-        # Wait for COORDINATOR message
-        coordinator = self.wait_for_coordinator()
-        if coordinator:
-            self.coordinator_ip = coordinator
-            return False
-        else:
-            # No coordinator announced, become coordinator
-            self.become_coordinator()
-            return True
-    
-    def send_election_messages(self):
-        """Send ELECTION messages to higher nodes"""
-        responses = []
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(2.0)  # 2 second timeout
-        
-        for node_ip in self.higher_nodes:
-            try:
-                message = {
-                    "type": "ELECTION",
-                    "from_ip": self.my_ip,
-                    "timestamp": time.time()
-                }
-                message_bytes = json.dumps(message).encode()
-                sock.sendto(message_bytes, (node_ip, self.election_port))
-                
-                # Wait for OK response
-                try:
-                    data, addr = sock.recvfrom(1024)
-                    response = json.loads(data.decode())
-                    if response.get("type") == "OK":
-                        responses.append(addr[0])
-                        print(f"Received OK from {addr[0]}")
-                except socket.timeout:
-                    print(f"No response from {node_ip}")
-                    
-            except Exception as e:
-                print(f"Failed to send election to {node_ip}: {e}")
-        
-        sock.close()
-        return responses
-    
-    def wait_for_coordinator(self, timeout=5):
-        """Wait for COORDINATOR message"""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.settimeout(timeout)
-        
-        try:
-            sock.bind(('', self.election_port))
-            
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                try:
-                    data, addr = sock.recvfrom(1024)
-                    message = json.loads(data.decode())
-                    
-                    if message.get("type") == "COORDINATOR":
-                        coordinator_ip = message.get("coordinator_ip")
-                        print(f"New coordinator announced: {coordinator_ip}")
-                        sock.close()
-                        return coordinator_ip
-                        
-                except socket.timeout:
-                    continue
-                    
-        except Exception as e:
-            print(f"Error waiting for coordinator: {e}")
-        
-        sock.close()
-        return None
-    
-    def become_coordinator(self):
-        """Become the new coordinator and announce to all nodes"""
-        self.is_coordinator = True
-        self.coordinator_ip = self.my_ip
-        print(f"Becoming new coordinator: {self.my_ip}")
-        
-        # Announce to all other nodes
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        
-        for node_ip in self.all_nodes:
-            if node_ip != self.my_ip:
-                try:
-                    message = {
-                        "type": "COORDINATOR",
-                        "coordinator_ip": self.my_ip,
-                        "timestamp": time.time()
-                    }
-                    message_bytes = json.dumps(message).encode()
-                    sock.sendto(message_bytes, (node_ip, self.election_port))
-                    print(f"Announced coordinator to {node_ip}")
-                except Exception as e:
-                    print(f"Failed to announce to {node_ip}: {e}")
-        
-        sock.close()
-    
-    def handle_election_messages(self):
-        """Handle incoming election messages"""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.settimeout(1.0)
-        
-        try:
-            sock.bind(('', self.election_port))
-            
-            while self.running:
-                try:
-                    data, addr = sock.recvfrom(1024)
-                    message = json.loads(data.decode())
-                    
-                    if message.get("type") == "ELECTION":
-                        # Respond with OK
-                        ok_response = {"type": "OK", "from_ip": self.my_ip}
-                        sock.sendto(json.dumps(ok_response).encode(), addr)
-                        
-                        # Start my own election
-                        threading.Thread(target=self.start_election, 
-                                       args=(self.all_nodes,)).start()
-                        
-                except socket.timeout:
-                    continue
-                    
-        except Exception as e:
-            print(f"Error handling election messages: {e}")
-        
-        sock.close()
-    
-    def stop(self):
-        """Stop election process"""
-        self.running = False
-
 class NetworkManager:
     def __init__(self, is_leader=True, leader_port=5555, leader_ip="127.0.0.1", discovery=None):
         self.context = zmq.Context()
@@ -357,44 +184,65 @@ class NetworkManager:
         self.player_id = str(uuid.uuid4())
         self.connected_players = {}
         self.game_state = None
+        # Eksempel på game_state indhold:
+        # {
+        #     "num_players": 3,
+        #     "ball": {
+        #         "posx": 400.5,
+        #         "posy": 300.2,
+        #         "xFac": 0.707,
+        #         "yFac": -0.707
+        #     },
+        #     "players": [
+        #         {"field_pos": 0.5, "x": 20, "y": 250, "corners": [(20,200), (30,200), (30,300), (20,300)]},
+        #         {"field_pos": 0.3, "x": 770, "y": 180, "corners": [...]}
+        #     ],
+        #     "scores": [2, 1, 0]
+        # }
         self.running = True
         self.discovery = discovery
-        self.known_players = {}  # Track all known player IPs
-        self.my_ip = self.get_my_ip()
-        self.election = LeaderElection(self.my_ip)
-        self.leader_disconnected = False
+        self.last_heartbeat = {}  # Track last heartbeat from each player
         
         if is_leader:
             self.setup_leader()
         else:
             self.setup_follower()
-    
-    def get_my_ip(self):
-        """Get local IP address"""
-        try:
-            temp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            temp_sock.connect(("8.8.8.8", 80))
-            my_ip = temp_sock.getsockname()[0]
-            temp_sock.close()
-            return my_ip
-        except:
-            return "127.0.0.1"
+        # if is_leader:
+        #     # ROUTER for receiving input
+        #     self.input_socket = self.context.socket(zmq.ROUTER)
+        #     self.input_socket.bind(f"tcp://*:{leader_port}")
+            
+        #     # PUB for broadcasting game state
+        #     self.pub_socket = self.context.socket(zmq.PUB)
+        #     self.pub_socket.bind(f"tcp://*:{leader_port + 1}")
+        # else:
+        #     # DEALER for sending input
+        #     self.input_socket = self.context.socket(zmq.DEALER)
+        #     self.input_socket.connect(f"tcp://{leader_ip}:{leader_port}")
+            
+        #     # SUB for receiving game state
+        #     self.sub_socket = self.context.socket(zmq.SUB)
+        #     self.sub_socket.connect(f"tcp://{leader_ip}:{leader_port + 1}")
+        #     self.sub_socket.setsockopt(zmq.SUBSCRIBE, b"")  # Subscribe to all messages
     
     def setup_leader(self):
         self.socket = self.context.socket(zmq.ROUTER)
         self.socket.bind(f"tcp://*:{self.leader_port}")
         self.socket.setsockopt(zmq.RCVTIMEO, 100)  # 100ms timeout
         print(f"Leader started on port {self.leader_port}")
+        # # Input socket (ROUTER)
+        # self.input_socket = self.context.socket(zmq.ROUTER)
+        # self.input_socket.bind(f"tcp://*:{self.leader_port}")
+        # self.input_socket.setsockopt(zmq.RCVTIMEO, 100)
+        
+        # Game state broadcast socket (PUB)
+        # self.pub_socket = self.context.socket(zmq.PUB)
+        # self.pub_socket.bind(f"tcp://*:{self.leader_port + 1}")
+        # print(f"Leader: Input on {self.leader_port}, Game state on {self.leader_port + 1}")
         
         # Start network discovery broadcasting
         if self.discovery:
             self.discovery.start_leader_broadcast()
-        
-        # Start election message handler
-        self.election.running = True
-        self.election_thread = threading.Thread(target=self.election.handle_election_messages)
-        self.election_thread.daemon = True
-        self.election_thread.start()
         
         # Start network thread
         self.network_thread = threading.Thread(target=self.leader_network_loop)
@@ -411,16 +259,15 @@ class NetworkManager:
         self.send_message({"type": "join", "player_id": self.player_id})
         print(f"Connecting to leader at {self.leader_ip}:{self.leader_port}")
         
-        # Start election message handler
-        self.election.running = True
-        self.election_thread = threading.Thread(target=self.election.handle_election_messages)
-        self.election_thread.daemon = True
-        self.election_thread.start()
-        
         # Start network thread
         self.network_thread = threading.Thread(target=self.follower_network_loop)
         self.network_thread.daemon = True
         self.network_thread.start()
+        
+        # Start heartbeat thread
+        self.heartbeat_thread = threading.Thread(target=self.follower_heartbeat_loop)
+        self.heartbeat_thread.daemon = True
+        self.heartbeat_thread.start()
     
     def leader_network_loop(self):
         while self.running:
@@ -428,30 +275,57 @@ class NetworkManager:
                 # Receive messages from followers
                 identity, message = self.socket.recv_multipart(zmq.NOBLOCK)
                 data = json.loads(message.decode())
+                player_id = identity.decode()
+                
+                # Update last heartbeat time
+                self.last_heartbeat[player_id] = time.time()
                 
                 if data["type"] == "join":
-                    self.handle_player_join(identity.decode(), data)
+                    self.handle_player_join(player_id, data)
                 elif data["type"] == "input":
-                    self.handle_player_input(identity.decode(), data)
+                    self.handle_player_input(player_id, data)
+                elif data["type"] == "heartbeat":
+                    pass  # Just updating last_heartbeat is enough
                 elif data["type"] == "disconnect":
-                    self.handle_player_disconnect(identity.decode())
+                    self.handle_player_disconnect(player_id)
                     
             except zmq.Again:
                 pass  # No message received
             except Exception as e:
                 print(f"Leader network error: {e}")
             
+            # Check for disconnected players (timeout check)
+            self.check_disconnected_players()
+            
             time.sleep(0.001)  # Small delay to prevent busy waiting
     
-    def follower_network_loop(self):
-        consecutive_failures = 0
-        max_failures = 10  # Allow some network hiccups
+    def check_disconnected_players(self):
+        """Check for players that haven't sent heartbeat recently"""
+        current_time = time.time()
+        disconnected_players = []
         
+        for player_id, last_time in list(self.last_heartbeat.items()):
+            if current_time - last_time > 5.0:  # 5 second timeout
+                disconnected_players.append(player_id)
+        
+        for player_id in disconnected_players:
+            print(f"Player {player_id} timed out, removing...")
+            self.handle_player_disconnect(player_id)
+    
+    def follower_heartbeat_loop(self):
+        """Send periodic heartbeat to leader"""
+        while self.running:
+            try:
+                self.send_message({"type": "heartbeat", "player_id": self.player_id})
+            except:
+                break  # Connection lost
+            time.sleep(2.0)  # Send heartbeat every 2 seconds
+    
+    def follower_network_loop(self):
         while self.running:
             try:
                 message = self.socket.recv(zmq.NOBLOCK)
                 data = json.loads(message.decode())
-                consecutive_failures = 0  # Reset failure counter
                 
                 if data["type"] == "game_state":
                     self.game_state = data["state"]
@@ -460,41 +334,26 @@ class NetworkManager:
                     print(f"Assigned as player {self.my_player_index + 1}")
                     
             except zmq.Again:
-                consecutive_failures += 1
-                if consecutive_failures > max_failures:
-                    # Leader might be disconnected
-                    if not self.leader_disconnected:
-                        print("Leader appears to be disconnected. Starting election...")
-                        self.leader_disconnected = True
-                        self.start_leader_election()
-                        break
+                pass  # No message received
             except Exception as e:
                 print(f"Follower network error: {e}")
-                consecutive_failures += 1
             
             time.sleep(0.001)
     
     def handle_player_join(self, player_id, data):
         if player_id not in self.connected_players:
             player_index = len(self.connected_players)
-            player_ip = data.get("player_ip", "unknown")
-            
             self.connected_players[player_id] = {
                 "index": player_index,
-                "movement": 0,
-                "ip": player_ip
+                "movement": 0
             }
+            self.last_heartbeat[player_id] = time.time()
+            print(f"Player {player_id} joined as player {player_index + 1}")
             
-            # Track known players for election
-            self.known_players[player_ip] = player_id
-            
-            print(f"Player {player_id} joined as player {player_index + 1} from {player_ip}")
-            
-            # Send player assignment with known players list
+            # Send player assignment
             response = {
                 "type": "player_assigned",
-                "player_index": player_index,
-                "known_players": list(self.known_players.keys())
+                "player_index": player_index
             }
             self.socket.send_multipart([player_id.encode(), json.dumps(response).encode()])
     
@@ -505,12 +364,15 @@ class NetworkManager:
     def handle_player_disconnect(self, player_id):
         if player_id in self.connected_players:
             del self.connected_players[player_id]
+            if player_id in self.last_heartbeat:
+                del self.last_heartbeat[player_id]
             print(f"Player {player_id} disconnected")
+            
+            # Reassign player indices to maintain continuity
+            for i, (pid, player_data) in enumerate(self.connected_players.items()):
+                player_data["index"] = i
     
     def send_message(self, data):
-        # Add my IP to messages for tracking
-        data["player_ip"] = self.my_ip
-        
         if self.is_leader:
             # Broadcast to all followers
             for player_id in self.connected_players:
@@ -539,6 +401,15 @@ class NetworkManager:
                 "type": "game_state",
                 "state": game_state
             })
+    # def broadcast_game_state(self, game_state):
+    #     if self.is_leader:
+    #         message = {
+    #             "type": "game_state",
+    #             "state": game_state,
+    #             "timestamp": time.time()
+    #         }
+    #         # PUB socket - one message to all subscribers
+    #         self.pub_socket.send_json(message, zmq.NOBLOCK)
     
     def get_player_count(self):
         if self.is_leader:
@@ -558,14 +429,24 @@ class NetworkManager:
     
     def cleanup(self):
         self.running = False
-        self.election.stop()
+        
+        # Send disconnect message if follower
+        if not self.is_leader:
+            try:
+                self.send_message({"type": "disconnect", "player_id": self.player_id})
+                time.sleep(0.1)  # Give time for message to send
+            except:
+                pass
+        
         if hasattr(self, 'network_thread'):
             self.network_thread.join(timeout=1.0)
-        if hasattr(self, 'election_thread'):
-            self.election_thread.join(timeout=1.0)
+        if hasattr(self, 'heartbeat_thread'):
+            self.heartbeat_thread.join(timeout=1.0)
         if self.discovery:
             self.discovery.stop()
         self.socket.close()
+        if hasattr(self, 'pub_socket'):
+            self.pub_socket.close()
         self.context.term()
 
 class GameField:
@@ -584,6 +465,12 @@ class GameField:
             self.walls = [
                 ((0, 0), (WIDTH, 0)),
                 ((0, HEIGHT-1), (WIDTH, HEIGHT-1))
+                # Screen coordinates: (0,0) er top-left corner
+                # (0, 0) -------- (WIDTH, 0)     <- Top wall
+                #   |                    |
+                #   |                    |
+                #   |                    |
+                # (0,HEIGHT) -- (WIDTH,HEIGHT)   <- Bottom wall
             ]
             self.player_positions = [
                 (20, self.center_y, 0, 0)
@@ -603,31 +490,64 @@ class GameField:
                 ((WIDTH, 0), (WIDTH, HEIGHT)),
                 ((WIDTH, HEIGHT), (0, HEIGHT)),
                 ((0, HEIGHT), (0, 0))
+                # Walls danner closed loop:
+                # Wall 1: (0,0) → (W,0)     ┌─────┐
+                # Wall 2: (W,0) → (W,H)     │     │
+                # Wall 3: (W,H) → (0,H)     │     │
+                # Wall 4: (0,H) → (0,0)     └─────┘
             ]
             self.player_positions = [
                 (self.center_x, 20, math.pi/2, 0),
                 (WIDTH-30, self.center_y, 0, -math.pi/2),
                 (self.center_x, HEIGHT-30, -math.pi/2, math.pi),
                 (20, self.center_y, math.pi, math.pi/2)
+                # Top player: (center_x, 20, math.pi/2, 0) - Horizontal paddle på top
+                # Right player: (WIDTH-30, center_y, 0, -math.pi/2) - Vertical paddle på right
+                # Bottom player: (center_x, HEIGHT-30, -math.pi/2, math.pi) - Horizontal paddle på bottom
+                # Left player: (20, center_y, math.pi, math.pi/2) - Vertical paddle på left
             ]
         else:
             angle_step = 2 * math.pi / self.num_players
+            # 3 players: 2π/3 = 120 degrees mellem hver player
+            # 5 players: 2π/5 = 72 degrees mellem hver player
+            # 6 players: 2π/6 = 60 degrees mellem hver player
+            # 8 players: 2π/8 = 45 degrees mellem hver player
             self.walls = []
             self.player_positions = []
             
             vertices = []
             for i in range(self.num_players):
-                angle = i * angle_step - math.pi/2
-                x = self.center_x + self.radius * math.cos(angle)
-                y = self.center_y + self.radius * math.sin(angle)
+                angle = i * angle_step - math.pi/2 # Player angle calculation:
+                    # i * angle_step: Basic angular position for player i
+                    # - math.pi/2: Rotation adjustment så første player starter på top
+                    # Starting position: Uden adjustment ville første player være på right side
+                    # Uden adjustment:
+                    # Player 0: angle = 0 (right side)
+                    # Player 1: angle = 2π/n (clockwise fra right)
+
+                    # Med adjustment (- π/2):
+                    # Player 0: angle = -π/2 (top)
+                    # Player 1: angle = -π/2 + 2π/n (clockwise fra top)
+
+                x = self.center_x + self.radius * math.cos(angle) # X-coordinate på circle
+                y = self.center_y + self.radius * math.sin(angle) # Y-coordinate på circle
                 vertices.append((x, y))
             
-            for i in range(self.num_players):
-                next_i = (i + 1) % self.num_players
+            for i in range(self.num_players): #Wall generation loop:
+                next_i = (i + 1) % self.num_players # (i + 1): Normal increment til næste vertex, 
+                # % self.num_players: Modulo for wrap-around til første vertex
+                # Circular indexing: Sidste vertex connecter til første vertex
                 
                 wall_start = vertices[i]
                 wall_end = vertices[next_i]
                 self.walls.append((wall_start, wall_end))
+                # For 6-sided polygon:
+                # Wall 0: vertex[0] → vertex[1]
+                # Wall 1: vertex[1] → vertex[2]
+                # Wall 2: vertex[2] → vertex[3]
+                # Wall 3: vertex[3] → vertex[4]
+                # Wall 4: vertex[4] → vertex[5]
+                # Wall 5: vertex[5] → vertex[0]  # Closing wall
                 
                 mid_x = (wall_start[0] + wall_end[0]) / 2
                 mid_y = (wall_start[1] + wall_end[1]) / 2
@@ -648,18 +568,27 @@ class GameField:
 class Striker:
     def __init__(self, field_pos, width, height, speed, color, player_id):
         self.field_pos = field_pos
+        # field_pos = 0.0: paddle på start af wall
+        # field_pos = 0.5: paddle på midten af wall  
+        # field_pos = 1.0: paddle på ende af wall
+        # Actual pixel position beregnes fra field_pos og wall geometry
         self.width = width
         self.height = height
         self.speed = speed
         self.original_color = color  # Store original color
-        self.color = color
+        self.color = color  # This will be modified based on who is viewing
         self.player_id = player_id
         self.wall_start = None
         self.wall_end = None
         self.wall_angle = 0
         self.normal_angle = 0
         self.rect = None
-        
+    
+    # Geometry state explanation:
+    # 2-player mode: wall_start/wall_end er None, bruges simple positioning
+    # Multi-player mode: wall_start/wall_end definerer wall segment for paddle
+    # Angle system: Alle angles er i radians for matematik consistency
+    
     def set_wall_info(self, wall_start, wall_end, wall_angle, normal_angle):
         self.wall_start = wall_start
         self.wall_end = wall_end
@@ -668,10 +597,14 @@ class Striker:
         self.update_position()
     
     def update_position(self):
-        if self.wall_start is None:
+        if self.wall_start is None: # Simple 2-player mode
             self.x = 20 if self.player_id == 0 else WIDTH - 30
             self.y = (self.field_pos * (HEIGHT - self.height))
             self.y = max(0, min(HEIGHT - self.height, self.y))
+            # field_pos = 0.0: y = 0 * (HEIGHT - height) = 0 (top)
+            # field_pos = 0.5: y = 0.5 * (HEIGHT - height) = middle
+            # field_pos = 1.0: y = 1.0 * (HEIGHT - height) = HEIGHT - height (bottom)
+            # Paddle bottom er altid mindst height pixels fra screen bottom
             
             self.corners = [
                 (self.x, self.y),
@@ -680,20 +613,29 @@ class Striker:
                 (self.x, self.y + self.height)
             ]
             
-            self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
-        else:
-            wall_x = self.wall_start[0] + (self.wall_end[0] - self.wall_start[0]) * self.field_pos
-            wall_y = self.wall_start[1] + (self.wall_end[1] - self.wall_start[1]) * self.field_pos
+            self.rect = pygame.Rect(self.x, self.y, self.width, self.height) # Paddle rectangle for collision detection
+        else: # Multi-player mode with wall geometry
+            wall_x = self.wall_start[0] + (self.wall_end[0] - self.wall_start[0]) * self.field_pos # X-displacement along wall
+            wall_y = self.wall_start[1] + (self.wall_end[1] - self.wall_start[1]) * self.field_pos # Y-displacement along wall
             
-            offset = 15
-            self.x = wall_x + offset * math.cos(self.normal_angle)
-            self.y = wall_y + offset * math.sin(self.normal_angle)
+            offset = 15 # Offset from wall to paddle center
+            self.x = wall_x + offset * math.cos(self.normal_angle) # X-position with normal offset
+            self.y = wall_y + offset * math.sin(self.normal_angle) # Y-position with normal offset
+            # normal_angle er perpendicular til wall
+            # cos(normal_angle), sin(normal_angle) giver unit normal vector
+            # Multiplying med offset giver displacement vector
+            # Adding til wall position giver final paddle position
             
-            cos_a = math.cos(self.wall_angle)
-            sin_a = math.sin(self.wall_angle)
-            
+            cos_a = math.cos(self.wall_angle) # Rotation matrix components
+            sin_a = math.sin(self.wall_angle) # Rotation matrix components
+
             hw, hh = self.height/2, self.width/2
             corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+            # Local coordinates (center er origin):
+            # (-hw, -hh) --- (hw, -hh)    # Top edge
+            #      |             |
+            #      |             |  
+            # (-hw, hh)  --- (hw, hh)     # Bottom edge
             
             self.corners = []
             for cx, cy in corners:
@@ -703,77 +645,47 @@ class Striker:
             
             self.rect = pygame.Rect(self.x - hw, self.y - hh, self.height, self.width)
     
-    def update(self, movement, dt):
-        if movement != 0:
-            if self.wall_start is None:
+    def update(self, movement, dt): # Update paddle position based on input and delta time dt 
+        if movement != 0: # Only update if there is movement input
+            if self.wall_start is None: # Simple 2-player mode
                 self.field_pos += movement * self.speed * dt / HEIGHT
-                self.field_pos = max(0.0, min(1.0, self.field_pos))
-            else:
+                self.field_pos = max(0.0, min(1.0, self.field_pos)) # Clamp field position
+            else: # Multi-player mode with wall geometry
                 wall_length = math.sqrt((self.wall_end[0] - self.wall_start[0])**2 + 
-                                      (self.wall_end[1] - self.wall_start[1])**2)
-                movement_per_second = self.speed / wall_length
-                self.field_pos += movement * movement_per_second * dt
-                self.field_pos = max(0.1, min(0.9, self.field_pos))
+                                      (self.wall_end[1] - self.wall_start[1])**2) # Wall segment length
+                movement_per_second = self.speed / wall_length # Normalized movement speed along wall
+                self.field_pos += movement * movement_per_second * dt # Update field position
+                self.field_pos = max(0.1, min(0.9, self.field_pos)) # Clamp field position to avoid going off wall
             self.update_position()
-    
-    def display(self, is_my_player=False):
-        """Display paddle with gold backing if it's the current player's paddle"""
+
+    def display(self, is_my_player=False): # Display paddle with appropriate color based on viewer
+        """Display paddle with gold border if it's the current player's paddle"""
         if len(self.corners) >= 4:
-            # If this is my player, draw a gold backing first (slightly larger)
-            if is_my_player:
-                self.draw_gold_backing()
-            
-            # Draw the main paddle in its original color
+            # Draw the paddle in its original color
             pygame.draw.polygon(screen, self.original_color, self.corners)
-    
-    def draw_gold_backing(self):
-        """Draw a gold backing behind the paddle"""
-        if self.wall_start is None:  # 2-player mode
-            # Create a slightly larger rectangle behind the paddle
-            backing_width = self.width + 4
-            backing_height = self.height + 4
-            backing_x = self.x - 2
-            backing_y = self.y - 2
             
-            backing_corners = [
-                (backing_x, backing_y),
-                (backing_x + backing_width, backing_y),
-                (backing_x + backing_width, backing_y + backing_height),
-                (backing_x, backing_y + backing_height)
-            ]
-            pygame.draw.polygon(screen, GOLD, backing_corners)
-        else:  # Polygon mode
-            # Create slightly larger polygon behind the paddle
-            cos_a = math.cos(self.wall_angle)
-            sin_a = math.sin(self.wall_angle)
-            
-            # Make backing slightly larger
-            hw, hh = (self.height + 4)/2, (self.width + 4)/2
-            corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
-            
-            backing_corners = []
-            for cx, cy in corners:
-                rx = cx * cos_a - cy * sin_a + self.x
-                ry = cx * sin_a + cy * cos_a + self.y
-                backing_corners.append((rx, ry))
-            
-            pygame.draw.polygon(screen, GOLD, backing_corners)
-    
-    def get_rect(self):
+            # Add gold border if this is the current player's paddle
+            if is_my_player:
+                pygame.draw.polygon(screen, GOLD, self.corners, 3)  # 3 pixel thick gold border
+
+    def get_rect(self): # Return paddle rectangle for collision detection
         return self.rect
     
-    def check_ball_collision(self, ball):
-        if self.wall_start is None:
-            return pygame.Rect.colliderect(ball.get_rect(), self.get_rect())
-        else:
-            return self.point_in_polygon_collision(ball.posx, ball.posy, ball.radius)
+    def check_ball_collision(self, ball): # Check collision between paddle and ball
+        if self.wall_start is None: # Simple 2-player mode
+            return pygame.Rect.colliderect( # Rectangle collision detection
+                ball.get_rect(),  # Ball rectangle
+                self.get_rect())  # Paddle rectangle
+        else: # Multi-player mode with polygon paddle
+            return self.point_in_polygon_collision(ball.posx, ball.posy, ball.radius) # Polygon collision detection
     
-    def point_in_polygon_collision(self, cx, cy, radius):
+    def point_in_polygon_collision(self, cx, cy, radius): # cx, cy: Circle center coordinates (ball position)
         for i in range(len(self.corners)):
             x1, y1 = self.corners[i]
             x2, y2 = self.corners[(i + 1) % len(self.corners)]
             
-            dist = self.point_to_line_distance(cx, cy, x1, y1, x2, y2)
+            dist = self.point_to_line_distance(cx, cy, x1, y1, x2, y2) 
+            # Geometric Principle: Circle collides with polygon if circle center is within radius distance of any edge
             if dist <= radius:
                 return True
         
@@ -801,17 +713,17 @@ class Striker:
 
 class Ball:
     def __init__(self, posx, posy, radius, speed, color):
-        self.posx = posx
-        self.posy = posy
-        self.radius = radius
-        self.speed = speed
-        self.color = color
-        angle = random.random() * 2 * math.pi
-        self.xFac = math.cos(angle)
-        self.yFac = math.sin(angle)
-        self.firstTime = 1
-        self.last_player_touched = None
-        self.has_been_touched = False
+        self.posx = posx # Ball position in pixels
+        self.posy = posy # Ball position in pixels
+        self.radius = radius # Ball radius in pixels
+        self.speed = speed # Ball speed in pixels per second
+        self.color = color # Ball color
+        angle = random.random() * 2 * math.pi # Random initial direction
+        self.xFac = math.cos(angle) # X-component of velocity direction
+        self.yFac = math.sin(angle) # Y-component of velocity direction
+        self.firstTime = 1 # Scoring flag to prevent multiple scores
+        self.last_player_touched = None # Index of last player who touched the ball
+        self.has_been_touched = False # Flag to indicate if ball has been touched by any player
     
     def display(self):
         pygame.draw.circle(screen, self.color, (int(self.posx), int(self.posy)), self.radius)
@@ -820,51 +732,53 @@ class Ball:
         self.posx += self.speed * self.xFac * dt
         self.posy += self.speed * self.yFac * dt
         
-        if field.num_players == 2:
+        if field.num_players == 2: # 2-player mode: check screen edges for scoring
             if self.posx - self.radius <= 0 and self.firstTime:
                 self.firstTime = 0
-                return 1
+                return 1 # Player 2 scores
             elif self.posx + self.radius >= WIDTH and self.firstTime:
                 self.firstTime = 0
-                return -1
+                return -1 # Player 1 scores
             
-            if self.posy - self.radius <= 0:
-                self.posy = self.radius
-                self.yFac *= -1
-            elif self.posy + self.radius >= HEIGHT:
-                self.posy = HEIGHT - self.radius
-                self.yFac *= -1
+            if self.posy - self.radius <= 0: # Top wall collision
+                self.posy = self.radius # Top boundary correction
+                self.yFac *= -1 # Reflect vertical direction
+            elif self.posy + self.radius >= HEIGHT: # Bottom wall collision
+                self.posy = HEIGHT - self.radius # Bottom boundary correction
+                self.yFac *= -1 # Reflect vertical direction
         else:
-            for i, wall in enumerate(field.walls):
-                if self.check_wall_collision(wall):
-                    self.reflect_off_wall(wall)
+            for i, wall in enumerate(field.walls): # Multi-player mode: check polygon walls for scoring
+                if self.check_wall_collision(wall): # Collision detected with wall
+                    self.reflect_off_wall(wall) # Reflect ball direction
                     
-                    x1, y1 = wall[0]
-                    x2, y2 = wall[1]
+                    x1, y1 = wall[0] # Wall start point
+                    x2, y2 = wall[1] # Wall end point
                     
-                    wx = x2 - x1
-                    wy = y2 - y1
-                    wall_length = math.sqrt(wx*wx + wy*wy)
+                    wx = x2 - x1 # Wall vector components
+                    wy = y2 - y1 # Wall vector components
+                    wall_length = math.sqrt(wx*wx + wy*wy) # Wall length calculation
                     
-                    if wall_length > 0:
-                        wx /= wall_length
-                        wy /= wall_length
+                    if wall_length > 0: # Normalize wall vector
+                        wx /= wall_length # Normalized wall x-component
+                        wy /= wall_length # Normalized wall y-component
                         
-                        nx = -wy
-                        ny = wx
+                        nx = -wy # Normal vector components
+                        ny = wx # Normal vector components
                         
-                        center_dx = field.center_x - self.posx
-                        center_dy = field.center_y - self.posy
-                        if (nx * center_dx + ny * center_dy) < 0:
-                            nx = -nx
-                            ny = -ny
+                        center_dx = field.center_x - self.posx # Vector from ball to field center
+                        center_dy = field.center_y - self.posy # Vector from ball to field center
+                        if (nx * center_dx + ny * center_dy) < 0: # Normal points inward, reverse if necessary
+                            nx = -nx # Reverse normal x-component
+                            ny = -ny # Reverse normal y-component
                         
-                        self.posx += nx * (self.radius + 2)
-                        self.posy += ny * (self.radius + 2)
+                        # Position correction to avoid sticking. Prevents ball from getting stuck inside wall. Ball radius + 2 pixels buffer
+                        self.posx += nx * (self.radius + 2) 
+                        self.posy += ny * (self.radius + 2) 
                     
-                    if self.has_been_touched and self.last_player_touched is not None:
-                        self.firstTime = 0
-                        return self.last_player_touched + 1
+                    # Scoring in Multi-Player Mode:
+                    if self.has_been_touched and self.last_player_touched is not None: # Scoring condition
+                        self.firstTime = 0 # Prevent multiple scores
+                        return self.last_player_touched + 1 # Return scoring player index (1-based)
                     else:
                         break
         
@@ -874,16 +788,20 @@ class Ball:
         x1, y1 = wall[0]
         x2, y2 = wall[1]
         
-        dx = self.posx - x1
-        dy = self.posy - y1
+        dx = self.posx - x1  # Vector from wall start to ball center
+        dy = self.posy - y1  
         
-        wx = x2 - x1
+        wx = x2 - x1         # Wall direction vector
         wy = y2 - y1
         
         wall_length_sq = wx*wx + wy*wy
         if wall_length_sq == 0:
             return False
-            
+
+        # Dot product formula: (dx*wx + dy*wy) projects ball-to-start vector onto wall vector
+        # Normalization: Division by wall_length_sq gives parameter t
+        # Clamping: max(0, min(1, t)) ensures t stays within [0,1] range
+        # Geometric meaning: t=0 means closest point is wall start, t=1 means wall end
         t = max(0, min(1, (dx*wx + dy*wy) / wall_length_sq))
         
         closest_x = x1 + t * wx
@@ -897,6 +815,7 @@ class Ball:
         x1, y1 = wall[0]
         x2, y2 = wall[1]
         
+        # Wall Vector Normalization:
         wx = x2 - x1
         wy = y2 - y1
         wall_length = math.sqrt(wx*wx + wy*wy)
@@ -907,20 +826,27 @@ class Ball:
         wx /= wall_length
         wy /= wall_length
         
+        # Normal Vector Calculation:
         nx = -wy
         ny = wx
         
+        # Reflection Formula:
+        # Dot product: dot = velocity · normal measures velocity component along normal
+        # Reflection formula: v_reflected = v_original - 2 × (v · n) × n
+        # Physics principle: Reflects velocity vector across the normal vector
+        # Conservation: Maintains speed magnitude, only changes direction
         dot = self.xFac * nx + self.yFac * ny
         self.xFac = self.xFac - 2 * dot * nx
         self.yFac = self.yFac - 2 * dot * ny
     
     def reset(self, field):
+        # Reset ball to center with random direction
         self.posx = field.center_x
         self.posy = field.center_y
         if field.num_players == 2:
             angle = random.choice([-0.5, 0.5, math.pi - 0.5, math.pi + 0.5])
-            self.xFac = math.cos(angle)
-            self.yFac = math.sin(angle)
+            self.xFac = math.cos(angle) # Random initial direction
+            self.yFac = math.sin(angle) # Random initial direction
         else:
             angle = random.random() * 2 * math.pi
             self.xFac = math.cos(angle)
@@ -930,17 +856,19 @@ class Ball:
         self.has_been_touched = False
     
     def hit(self):
-        self.xFac *= -1
+        self.xFac *= -1 # Reverse horizontal direction
+        # 2-player specific: Only used in traditional 2-player Pong
     
-    def player_hit(self, player_id):
-        self.last_player_touched = player_id
-        self.has_been_touched = True
+    def player_hit(self, player_id): # player_id: Integer identifying which player touched the ball. Records last player for scoring purposes
+        self.last_player_touched = player_id # Record last player who touched the ball
+        self.has_been_touched = True # Mark that ball has been touched by a player
     
-    def get_rect(self):
+    def get_rect(self): #
         return pygame.Rect(self.posx - self.radius, self.posy - self.radius, 
                           self.radius * 2, self.radius * 2)
 
 def create_game_state(field, players, ball, scores):
+    # Purpose: Converts complex game objects into JSON-serializable dictionary for network transmission
     """Create serializable game state for network transmission"""
     player_states = []
     for player in players:
@@ -964,6 +892,8 @@ def create_game_state(field, players, ball, scores):
     }
 
 def apply_game_state(state, field, players, ball, scores):
+    # Network Deserialization Function:
+    # Purpose: Applies received game state to local game objects for synchronization
     """Apply received game state to local game objects"""
     if state is None:
         return scores
@@ -1052,44 +982,48 @@ def main():
             ball_speed = 400
             
             color = colors[i % len(colors)]
-            player = Striker(0.5, 10, 100, paddle_speed, color, i)
+            player = Striker(0.5, 10, 100, paddle_speed, color, i) # Create player paddle object 
+            # 0.5 (field_pos centered) 10 width, 100 height, 600 speed, color, player_id
             
             if field.num_players <= 2:
                 player.update_position()
             else:
                 if i < len(field.walls):
-                    wall_start, wall_end = field.walls[i]
-                    wall_angle = math.atan2(wall_end[1] - wall_start[1], wall_end[0] - wall_start[0])  # Fixed typo
-                    normal_angle = wall_angle + math.pi/2
-                    player.set_wall_info(wall_start, wall_end, wall_angle, normal_angle)
-            players.append(player)
+                    wall_start, wall_end = field.walls[i] # Get wall segment for player
+                    wall_angle = math.atan2(wall_end[1] - wall_start[1], wall_end[0] - wall_start[0]) # Wall angle calculation
+                    normal_angle = wall_angle + math.pi/2 # Normal angle calculation
+                    player.set_wall_info(wall_start, wall_end, wall_angle, normal_angle) # Set wall geometry for paddle
+            players.append(player) # Add player to list
         
-        ball = Ball(field.center_x, field.center_y, 8, ball_speed, WHITE)
+        ball = Ball(field.center_x, field.center_y, 8, ball_speed, WHITE) # Create ball object at center of field
         
         if field.num_players <= 2:
-            angle = random.choice([-0.5, 0.5, math.pi - 0.5, math.pi + 0.5])
-            ball.xFac = math.cos(angle)
-            ball.yFac = math.sin(angle)
+            angle = random.choice([-0.5, 0.5, math.pi - 0.5, math.pi + 0.5]) # Random initial direction
+            ball.xFac = math.cos(angle) # Set initial x direction
+            ball.yFac = math.sin(angle) # Set initial y direction
         else:
-            angle = random.random() * 2 * math.pi
+            angle = random.random() * 2 * math.pi # Random initial direction
             ball.xFac = math.cos(angle)
             ball.yFac = math.sin(angle)
         
         # Preserve existing scores or create new ones
-        if existing_scores and len(existing_scores) >= num_players:
-            scores = existing_scores[:num_players]
-        else:
-            scores = [0] * num_players
-            if existing_scores:
+        # Full preservation: If enough existing scores, truncate to current player count
+        # Partial preservation: Copy available scores, fill remainder with zeros
+        # New game: Create fresh zero scores for all players
+        if existing_scores and len(existing_scores) >= num_players: # Full preservation
+            scores = existing_scores[:num_players] # Truncate to current player count
+        else: # Partial preservation or new game
+            scores = [0] * num_players # Initialize scores to zero
+            if existing_scores: # Partial preservation
                 for i in range(min(len(existing_scores), num_players)):
-                    scores[i] = existing_scores[i]
+                    scores[i] = existing_scores[i] # Copy available scores
         
         return field, players, ball, scores
     
     # Initial setup
-    current_num_players = 1 if is_leader else 2  # Leader starts with 1 player
+    current_num_players = 1 if is_leader else 2  # Leader starts with 1 player, follower assumes at least 2, will be updated when connected
     field, players, ball, scores = setup_game(current_num_players)
-    movements = [0] * 8  # Support up to 8 players
+    movements = [0] * 5  # Support up to 5 players
     my_player_index = 0 if is_leader else 1  # Default to 1 for followers, will be updated when assigned
     last_num_players = current_num_players
     
@@ -1102,8 +1036,12 @@ def main():
         print(f"Manual connection: python basic_pong.py --join {leader_ip} --port {args.port}")
     
     while running:
-        dt = clock.tick(60) / 1000.0
+        dt = clock.tick(60) / 1000.0 # 
         dt = min(dt, 1/30.0)
+        # clock.tick(60): Targets 60 FPS, returns milliseconds since last frame
+        # / 1000.0: Converts to seconds for physics calculations
+        # min(dt, 1/30.0): Caps delta time to prevent large jumps (max 30 FPS minimum)
+        # Purpose: Ensures consistent physics regardless of performance variations
         
         screen.fill(BLACK)
         
@@ -1146,11 +1084,13 @@ def main():
         if is_leader:
             # Check for new players and adjust game
             total_players = network.get_player_count()
-            current_num_players = max(1, total_players) if total_players == 1 else max(2, total_players)
+            current_num_players = max(1, total_players) if total_players == 1 else max(2, total_players) # At least 1 for leader, at least 2 if followers connected
             
             if current_num_players != last_num_players:
                 print(f"Player count changed: {last_num_players} -> {current_num_players}")
-                field, players, ball, scores = setup_game(current_num_players, scores)
+                field, players, ball, scores = setup_game(current_num_players, scores) # Rebuild game objects
+                # Hot reconfiguration: Rebuilds game objects without stopping
+                # Score preservation: Passes existing scores to maintain game state
                 last_num_players = current_num_players
             
             # Get movements from network (followers only)
@@ -1169,17 +1109,17 @@ def main():
             if current_num_players >= 2:
                 # Ball collision with paddles
                 ball_hit_paddle = False
-                for player in players:
-                    if player.check_ball_collision(ball):
-                        ball.player_hit(player.player_id)
+                for player in players: # Check collision with each paddle
+                    if player.check_ball_collision(ball): # Check collision between paddle and ball
+                        ball.player_hit(player.player_id) # Record which player hit the ball
                         
-                        if field.num_players == 2:
-                            if player.player_id == 0 and ball.posx < player.x + player.width:
-                                ball.posx = player.x + player.width + ball.radius
-                            elif player.player_id == 1 and ball.posx > player.x:
-                                ball.posx = player.x - ball.radius
-                        else:
-                            nx = math.cos(player.normal_angle)
+                        if field.num_players == 2: # 2-Player Position Correction:
+                            if player.player_id == 0 and ball.posx < player.x + player.width: # Left paddle
+                                ball.posx = player.x + player.width + ball.radius # Position correction to avoid sticking
+                            elif player.player_id == 1 and ball.posx > player.x: # Right paddle
+                                ball.posx = player.x - ball.radius # Position correction to avoid sticking
+                        else: # Multi-Player Reflection Physics:
+                            nx = math.cos(player.normal_angle) 
                             ny = math.sin(player.normal_angle)
                             
                             dot = ball.xFac * nx + ball.yFac * ny
@@ -1195,13 +1135,13 @@ def main():
                         ball_hit_paddle = True
                         break
                 
-                # Update ball
+                # Update ball position and check for scoring
                 point = 0
-                if not ball_hit_paddle:
-                    point = ball.update(dt, field)
-                else:
-                    ball.posx += ball.speed * ball.xFac * dt
-                    ball.posy += ball.speed * ball.yFac * dt
+                if not ball_hit_paddle: # Only update normally if no paddle collision occurred
+                    point = ball.update(dt, field) # Update ball position and check for scoring
+                else: # If paddle collision occurred, just move ball normally
+                    ball.posx += ball.speed * ball.xFac * dt # Update ball position
+                    ball.posy += ball.speed * ball.yFac * dt # Update ball position
                 
                 # Handle scoring
                 if point != 0:
@@ -1239,7 +1179,7 @@ def main():
         for i, player in enumerate(players):
             # Determine if this is the current player's paddle
             is_my_player = (is_leader and i == 0) or (not is_leader and i == my_player_index)
-            player.display(is_my_player)
+            player.display(is_my_player) 
 
         # Only draw ball if we have at least 2 players
         if current_num_players >= 2 or not is_leader:
