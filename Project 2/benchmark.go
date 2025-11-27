@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Metrics holder performance og correctness metrics
+// Performance og correctness metrics struct initialization
 type Metrics struct {
 	ClockType           string
 	NumProcesses        int
@@ -18,13 +18,13 @@ type Metrics struct {
 	OrderingCorrectness float64 // Procent af korrekt ordnede events
 }
 
-// BenchmarkResult holder resultater fra en benchmark
+// Benchmark results struct initialization
 type BenchmarkResult struct {
 	LamportMetrics Metrics
 	VectorMetrics  Metrics
 }
 
-// RunBenchmark kører en omfattende benchmark af begge algoritmer
+// Kør benchmark for lamport og vector
 func RunBenchmark(numProcesses int, numEvents int) BenchmarkResult {
 	fmt.Printf("\n=== Running Benchmark ===\n")
 	fmt.Printf("Processes: %d, Events per process: %d\n", numProcesses, numEvents)
@@ -42,7 +42,7 @@ func RunBenchmark(numProcesses int, numEvents int) BenchmarkResult {
 	return result
 }
 
-// benchmarkAlgorithm måler performance for én algoritme
+// Måler performance for en algoritme
 func benchmarkAlgorithm(numProcesses int, numEvents int, useVectorClock bool) Metrics {
 	// Start memory measurement
 	var memBefore runtime.MemStats
@@ -108,8 +108,6 @@ func benchmarkAlgorithm(numProcesses int, numEvents int, useVectorClock bool) Me
 	}
 
 	// Calculate ordering correctness
-	// Dette er en forenklet metric - i virkeligheden ville vi analysere
-	// om events er korrekt ordnet baseret på deres causal dependencies
 	correctness := calculateOrderingCorrectness(sim)
 
 	clockType := "Lamport"
@@ -128,10 +126,8 @@ func benchmarkAlgorithm(numProcesses int, numEvents int, useVectorClock bool) Me
 	}
 }
 
-// calculateOrderingCorrectness beregner hvor mange events der kan ordnes korrekt
-// Dette er nu en REAL måling baseret på event logs, ikke hardcoded værdier
+// Beregner antal korrekt ordnede events
 func calculateOrderingCorrectness(sim *Simulation) float64 {
-	// Saml alle events fra alle processer
 	type EventRecord struct {
 		ProcessID int
 		Vector    []int
@@ -144,11 +140,11 @@ func calculateOrderingCorrectness(sim *Simulation) float64 {
 	// Saml events fra hver proces
 	for _, p := range sim.Processes {
 		if sim.UseVectorClock {
-			// Brug de gemte vector snapshots - dette er den KORREKTE måde!
+			// Brug de gemte vector snapshots
 			for i := 0; i < len(p.EventLog); i++ {
 				var vector []int
 				if i < len(p.EventVectors) {
-					vector = p.EventVectors[i] // Brug den faktiske vector fra det tidspunkt
+					vector = p.EventVectors[i]
 				} else {
 					// Fallback hvis der mangler data
 					vector = p.VectorClock.GetVector()
@@ -160,11 +156,11 @@ func calculateOrderingCorrectness(sim *Simulation) float64 {
 				})
 			}
 		} else {
-			// Brug de gemte Lamport timestamps - dette er den KORREKTE måde!
+			// Brug de gemte Lamport timestamps
 			for i := 0; i < len(p.EventLog); i++ {
 				var timestamp int
 				if i < len(p.EventTimestamps) {
-					timestamp = p.EventTimestamps[i] // Brug den faktiske timestamp fra det tidspunkt
+					timestamp = p.EventTimestamps[i]
 				} else {
 					// Fallback hvis der mangler data
 					timestamp = p.LamportClock.GetTime()
@@ -191,27 +187,16 @@ func calculateOrderingCorrectness(sim *Simulation) float64 {
 			totalPairs++
 
 			if sim.UseVectorClock {
-				// Med vector clocks kan vi altid bestemme relationen
 				_ = CompareVectors(allEvents[i].Vector, allEvents[j].Vector)
-				// comparison = -1: i < j (i happened before j)
-				// comparison =  1: j < i (j happened before i)
-				// comparison =  0: concurrent (ingen happens-before)
-				// Vector clocks kan ALTID bestemme relationen, også concurrency
 				orderablePairs++
 			} else {
-				// Med Lamport kan vi kun ordne hvis vi kan bestemme happens-before
 				t1 := allEvents[i].Timestamp
 				t2 := allEvents[j].Timestamp
 
 				if t1 != t2 {
-					// Forskellige timestamps betyder vi kan ordne dem
 					orderablePairs++
 				} else {
-					// Samme timestamp - Lamport kan IKKE bestemme om:
-					// 1. De er concurrent
-					// 2. Den ene happened-before den anden
-					// Dette er Lamport's limitation!
-					// Vi tæller det IKKE som orderable
+
 				}
 			}
 		}
@@ -224,7 +209,7 @@ func calculateOrderingCorrectness(sim *Simulation) float64 {
 	return (float64(orderablePairs) / float64(totalPairs)) * 100.0
 }
 
-// PrintMetrics printer metrics på en pæn måde
+// Print funktion
 func PrintMetrics(metrics Metrics) {
 	fmt.Printf("\n--- %s Metrics ---\n", metrics.ClockType)
 	fmt.Printf("Processes:           %d\n", metrics.NumProcesses)
@@ -236,7 +221,7 @@ func PrintMetrics(metrics Metrics) {
 	fmt.Printf("Ordering Capability: %.1f%%\n", metrics.OrderingCorrectness)
 }
 
-// CompareResults sammenligner og printer en comparison af to results
+// Sammenligner og printer en comparison af to results
 func CompareResults(result BenchmarkResult) {
 	fmt.Printf("\n\n=== COMPARISON ===\n")
 
@@ -278,8 +263,7 @@ func CompareResults(result BenchmarkResult) {
 	fmt.Println("  - Overhead scales with number of processes (O(n) per message)")
 }
 
-// BenchmarkScalability måler hvordan overhead vokser med antal processer
-// Dette viser den teoretiske O(1) vs O(n) kompleksitet i praksis
+// Måler hvordan scalability med overhead vokser med antal processer
 func BenchmarkScalability(processCounts []int, eventsPerProcess int) {
 	fmt.Println("\n\n=== SCALABILITY ANALYSIS ===")
 	fmt.Printf("Events per process: %d\n", eventsPerProcess)

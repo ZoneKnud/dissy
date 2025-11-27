@@ -20,7 +20,7 @@ func main() {
 	vectorSim := NewSimulation(3, true)
 	vectorSim.RunScenario()
 
-	// Demo 3: Concurrent Message Arrival - KRITISK TEST
+	// Demo 3: Concurrent Message Arrival
 	// Viser hvad der sker når 2 beskeder ankommer med samme Lamport timestamp
 	fmt.Println("\n\n### DEMO 3: CONCURRENT MESSAGE ARRIVAL ###")
 	fmt.Println("(This demonstrates Lamport's fundamental limitation)")

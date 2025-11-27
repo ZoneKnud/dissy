@@ -6,63 +6,62 @@ import (
 	"time"
 )
 
-// Event repræsenterer en hændelse i systemet
+// Event struct initialization
 type Event struct {
-	Type      string // "local", "send", eller "receive"
-	ProcessID int    // Hvilken proces der udfører eventet
-	TargetID  int    // Hvis Type er "send", hvem sendes beskeden til?
-	Message   string // Besked-indhold
+	Type      string 
+	ProcessID int    
+	TargetID  int    
+	Message   string 
 }
 
-// Process simulerer en distribueret proces
-// Den kan bruge enten Lamport eller Vector clock
+// Process struct initialization 
 type Process struct {
 	ID              int
 	LamportClock    *LamportClock
 	VectorClock     *VectorClock
-	EventLog        []string   // Log af alle events
-	EventVectors    [][]int    // Gemmer vector clock for hver event (kun hvis UseVectorClock=true)
-	EventTimestamps []int      // Gemmer Lamport timestamp for hver event (kun hvis UseVectorClock=false)
-	MessageQueue    chan Event // Channel til at modtage beskeder
-	UseVectorClock  bool       // Hvis true, brug vector clock, ellers lamport
+	EventLog        []string   
+	EventVectors    [][]int    // Gemmer vector clock 
+	EventTimestamps []int      // Gemmer Lamport timestamp
+	MessageQueue    chan Event 
+	UseVectorClock  bool       
 }
 
-// NewProcess opretter en ny proces
+// Opretter en ny proces
 func NewProcess(id int, numProcesses int, useVectorClock bool) *Process {
 	return &Process{
 		ID:              id,
 		LamportClock:    NewLamportClock(),
 		VectorClock:     NewVectorClock(numProcesses, id),
 		EventLog:        make([]string, 0),
-		EventVectors:    make([][]int, 0),      // Pre-allocate for vector snapshots
-		EventTimestamps: make([]int, 0),        // Pre-allocate for timestamp snapshots
-		MessageQueue:    make(chan Event, 100), // Buffered channel
+		EventVectors:    make([][]int, 0),      
+		EventTimestamps: make([]int, 0),        
+		MessageQueue:    make(chan Event, 100), 
 		UseVectorClock:  useVectorClock,
 	}
 }
 
-// HandleLocalEvent håndterer en lokal operation
+// Håndterer en lokal operation
 func (p *Process) HandleLocalEvent(message string) {
 	if p.UseVectorClock {
 		vector := p.VectorClock.LocalEvent()
-		p.EventVectors = append(p.EventVectors, copyVector(vector)) // Gem snapshot af vector
+		p.EventVectors = append(p.EventVectors, copyVector(vector)) 
 		logMsg := fmt.Sprintf("P%d: Local event %s at %s",
 			p.ID, FormatVector(vector), message)
 		p.EventLog = append(p.EventLog, logMsg)
 	} else {
 		timestamp := p.LamportClock.LocalEvent()
-		p.EventTimestamps = append(p.EventTimestamps, timestamp) // Gem timestamp
+		p.EventTimestamps = append(p.EventTimestamps, timestamp) 
 		logMsg := fmt.Sprintf("P%d: Local event T%d: %s",
 			p.ID, timestamp, message)
 		p.EventLog = append(p.EventLog, logMsg)
 	}
 }
 
-// SendMessage sender en besked til en anden proces
+// Sender en besked
 func (p *Process) SendMessage(target *Process, message string) {
 	if p.UseVectorClock {
 		vector := p.VectorClock.SendEvent()
-		p.EventVectors = append(p.EventVectors, copyVector(vector)) // Gem snapshot
+		p.EventVectors = append(p.EventVectors, copyVector(vector)) 
 		logMsg := fmt.Sprintf("P%d: Send to P%d at %s: %s",
 			p.ID, target.ID, FormatVector(vector), message)
 		p.EventLog = append(p.EventLog, logMsg)
@@ -75,7 +74,7 @@ func (p *Process) SendMessage(target *Process, message string) {
 		}
 	} else {
 		timestamp := p.LamportClock.SendEvent()
-		p.EventTimestamps = append(p.EventTimestamps, timestamp) // Gem timestamp
+		p.EventTimestamps = append(p.EventTimestamps, timestamp) 
 		logMsg := fmt.Sprintf("P%d: Send to P%d at T%d: %s",
 			p.ID, target.ID, timestamp, message)
 		p.EventLog = append(p.EventLog, logMsg)
@@ -89,55 +88,45 @@ func (p *Process) SendMessage(target *Process, message string) {
 	}
 }
 
-// ReceiveMessage håndterer modtagelse af en besked
+// Håndterer modtaget af en besked
 func (p *Process) ReceiveMessage(event Event) {
-	// Parse timestamp fra beskeden
 	var logMsg string
-
+	
 	if p.UseVectorClock {
 		// Parse vector fra beskeden
-		// Beskeden indeholder vectoren i event.Message
-		// Vi skal bruge den faktiske receivedVector fra SendMessage
-
-		// For nu parser vi den fra beskeden
-		// I en rigtig implementation ville man måske bruge JSON
 		var receivedVector []int
 
-		// Extract vector from message (format: "[1,2,3]|content")
+		// Extract vector fra besked
 		parts := splitMessage(event.Message)
 		if len(parts) == 2 {
 			receivedVector = parseVector(parts[0])
 		} else {
-			// Fallback: brug en tom vector
 			receivedVector = make([]int, len(p.VectorClock.vector))
 		}
 
-		// Gem vores vector før receive (for at vise synkronisering)
+		// Gem tid før receive 
 		beforeVector := p.VectorClock.GetVector()
-
 		vector := p.VectorClock.ReceiveEvent(receivedVector)
-		p.EventVectors = append(p.EventVectors, copyVector(vector)) // Gem snapshot efter receive
+		p.EventVectors = append(p.EventVectors, copyVector(vector))
 
-		// Vis synkroniseringen tydeligt
+		// Synkronisering
 		logMsg = fmt.Sprintf("P%d: Receive from P%d (received %s, was %s → synchronized to %s): %s",
 			p.ID, event.ProcessID, FormatVector(receivedVector),
 			FormatVector(beforeVector), FormatVector(vector), parts[1])
 	} else {
 		// Parse lamport timestamp fra beskeden
-		// Beskeden indeholder timestamp i format: "T|content"
 		parts := splitMessage(event.Message)
 		receivedTime := 0
 		if len(parts) == 2 {
 			fmt.Sscanf(parts[0], "%d", &receivedTime)
 		}
 
-		// Gem vores tid før receive (for at vise synkronisering)
+		// Gem tid før receive 
 		beforeTime := p.LamportClock.GetTime()
-
 		timestamp := p.LamportClock.ReceiveEvent(receivedTime)
 		p.EventTimestamps = append(p.EventTimestamps, timestamp) // Gem timestamp efter receive
 
-		// Vis synkroniseringen tydeligt
+		// Synkronisering
 		logMsg = fmt.Sprintf("P%d: Receive from P%d (received T%d, was T%d → synchronized to T%d): %s",
 			p.ID, event.ProcessID, receivedTime, beforeTime, timestamp, parts[1])
 	}
@@ -145,7 +134,7 @@ func (p *Process) ReceiveMessage(event Event) {
 	p.EventLog = append(p.EventLog, logMsg)
 }
 
-// splitMessage splitter en besked ved '|' separatoren
+// Splitter en besked
 func splitMessage(message string) []string {
 	for i, ch := range message {
 		if ch == '|' {
@@ -155,12 +144,9 @@ func splitMessage(message string) []string {
 	return []string{message}
 }
 
-// parseVector parser en vector string "[1,2,3]" til []int
+// Parser vector fra string til slice
 func parseVector(vectorStr string) []int {
-	// Fjern [ og ]
 	vectorStr = vectorStr[1 : len(vectorStr)-1]
-
-	// Split ved komma
 	parts := make([]string, 0)
 	current := ""
 	for _, ch := range vectorStr {
@@ -184,7 +170,7 @@ func parseVector(vectorStr string) []int {
 	return result
 }
 
-// Run starter processen og lytter efter beskeder
+// Starter processen og lytter efter beskeder
 func (p *Process) Run(done chan bool) {
 	go func() {
 		for {
@@ -194,20 +180,19 @@ func (p *Process) Run(done chan bool) {
 			case <-done:
 				return
 			case <-time.After(100 * time.Millisecond):
-				// Timeout for at undgå at hænge
 				continue
 			}
 		}
 	}()
 }
 
-// Simulation håndterer hele den distribuerede system simulation
+// Simulation struct initilization
 type Simulation struct {
 	Processes      []*Process
 	UseVectorClock bool
 }
 
-// NewSimulation opretter en ny simulation
+// Ny simulation
 func NewSimulation(numProcesses int, useVectorClock bool) *Simulation {
 	processes := make([]*Process, numProcesses)
 	for i := 0; i < numProcesses; i++ {
@@ -220,7 +205,7 @@ func NewSimulation(numProcesses int, useVectorClock bool) *Simulation {
 	}
 }
 
-// RunScenario kører et forudbestemt scenario af events
+// Kører scenario 
 func (sim *Simulation) RunScenario() {
 	// Start alle processer
 	done := make(chan bool)
@@ -228,29 +213,25 @@ func (sim *Simulation) RunScenario() {
 		p.Run(done)
 	}
 
-	// Vent lidt så alt er klar
 	time.Sleep(50 * time.Millisecond)
 
 	// Scenario: En række events der viser causal relationships
 	fmt.Println("\n=== Running Scenario ===")
 
-	// Alle processer starter med local events (realistisk!)
-	// Dette simulerer at hver proces har sit eget arbejde
+	// Begynd med events på alle processer 
 	fmt.Println("Phase 1: Initial local events (processer arbejder uafhængigt)")
 	sim.Processes[0].HandleLocalEvent("Initialize P0")
 	sim.Processes[1].HandleLocalEvent("Initialize P1")
 	sim.Processes[2].HandleLocalEvent("Initialize P2")
 	time.Sleep(10 * time.Millisecond)
 
-	// Flere initial events for at gøre det mere realistisk
+	// Flere initial events
 	sim.Processes[1].HandleLocalEvent("P1 local work")
 	sim.Processes[2].HandleLocalEvent("P2 local work")
 	time.Sleep(10 * time.Millisecond)
 
-	// Nu begynder kommunikationen
+	// Kommunikation begynder
 	fmt.Println("Phase 2: Communication starts")
-
-	// P0 har et lokalt event
 	sim.Processes[0].HandleLocalEvent("Event A")
 	time.Sleep(10 * time.Millisecond)
 
@@ -287,7 +268,7 @@ func (sim *Simulation) RunScenario() {
 	sim.PrintLogs()
 }
 
-// PrintLogs printer event logs fra alle processer
+// Printer event logs fra alle processer
 func (sim *Simulation) PrintLogs() {
 	fmt.Println("\n=== Event Logs ===")
 	for _, p := range sim.Processes {
@@ -298,7 +279,7 @@ func (sim *Simulation) PrintLogs() {
 	}
 }
 
-// GetClockType returnerer en string der beskriver hvilken clock der bruges
+// Returnerer clock type (Lamport eller vector )
 func (sim *Simulation) GetClockType() string {
 	if sim.UseVectorClock {
 		return "Vector Clock"
@@ -306,8 +287,7 @@ func (sim *Simulation) GetClockType() string {
 	return "Lamport Clock"
 }
 
-// RunConcurrentScenario demonstrerer concurrent message arrival
-// P1 og P2 sender beskeder til P0 samtidigt
+// Kør scenario med concurrency
 func (sim *Simulation) RunConcurrentScenario() {
 	// Start alle processer
 	done := make(chan bool)
@@ -316,7 +296,7 @@ func (sim *Simulation) RunConcurrentScenario() {
 	}
 	time.Sleep(10 * time.Millisecond)
 
-	// P1 og P2 laver lokale events først
+	// P1 og P2 laver lokale events 
 	for i := 0; i < 5; i++ {
 		sim.Processes[1].HandleLocalEvent(fmt.Sprintf("Work-%d", i+1))
 		sim.Processes[2].HandleLocalEvent(fmt.Sprintf("Work-%d", i+1))
@@ -334,13 +314,12 @@ func (sim *Simulation) RunConcurrentScenario() {
 	time.Sleep(20 * time.Millisecond)
 }
 
-// PrintRecentLogs printer de sidste n events fra hver proces
+// Printer de sidste n events fra hver proces
 func (sim *Simulation) PrintRecentLogs(n int) {
 	fmt.Println("\n=== Event Logs (Recent) ===")
 	for _, p := range sim.Processes {
 		fmt.Printf("\nProcess %d:\n", p.ID)
 
-		// Find start index for de sidste n events
 		startIdx := 0
 		if len(p.EventLog) > n {
 			startIdx = len(p.EventLog) - n
@@ -411,8 +390,7 @@ func DemonstrateConcurrentMessages() {
 	fmt.Println(strings.Repeat("═", 64))
 }
 
-// copyVector laver en dyb kopi af en vector
-// Dette er nødvendigt for at gemme snapshots af vector clocks
+// Retuner kopi af vector
 func copyVector(v []int) []int {
 	if v == nil {
 		return nil

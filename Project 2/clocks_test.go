@@ -4,41 +4,36 @@ import (
 	"testing"
 )
 
-// TestLamportClock tester basic Lamport clock funktionalitet
+// Tester Lamport clock funktionalitet
 func TestLamportClock(t *testing.T) {
 	clock := NewLamportClock()
 	
-	// Test at clock starter ved 0
 	if clock.GetTime() != 0 {
 		t.Errorf("Clock skulle starte ved 0, men er %d", clock.GetTime())
 	}
 	
-	// Test local event
 	time1 := clock.LocalEvent()
 	if time1 != 1 {
 		t.Errorf("Første local event skulle være 1, men er %d", time1)
 	}
 	
-	// Test send event
 	time2 := clock.SendEvent()
 	if time2 != 2 {
 		t.Errorf("Send event skulle være 2, men er %d", time2)
 	}
 	
-	// Test receive event med lavere tid (vores tid er højere)
 	time3 := clock.ReceiveEvent(1)
 	if time3 != 3 {
 		t.Errorf("Receive med lavere tid skulle give 3, men gav %d", time3)
 	}
 	
-	// Test receive event med højere tid (deres tid er højere)
 	time4 := clock.ReceiveEvent(10)
 	if time4 != 11 {
 		t.Errorf("Receive med højere tid (10) skulle give 11, men gav %d", time4)
 	}
 }
 
-// TestVectorClock tester basic Vector clock funktionalitet
+// Tester vector clock funktionalitet
 func TestVectorClock(t *testing.T) {
 	// Opret 3 processer
 	clock0 := NewVectorClock(3, 0)
@@ -52,19 +47,17 @@ func TestVectorClock(t *testing.T) {
 		}
 	}
 	
-	// Test local event på P0
 	vec0 := clock0.LocalEvent()
 	if vec0[0] != 1 || vec0[1] != 0 || vec0[2] != 0 {
 		t.Errorf("Efter local event på P0 forventede [1,0,0], fik %v", vec0)
 	}
 	
-	// Test send event på P0
 	vec0_send := clock0.SendEvent()
 	if vec0_send[0] != 2 {
 		t.Errorf("Efter send på P0 skulle P0's counter være 2, men er %d", vec0_send[0])
 	}
 	
-	// Test receive på P1 fra P0
+
 	vec1_recv := clock1.ReceiveEvent(vec0_send)
 	// P1 skulle merge [2,0,0] med sin egen [0,0,0] og så inkrementere sin egen
 	if vec1_recv[0] != 2 || vec1_recv[1] != 1 || vec1_recv[2] != 0 {
@@ -72,7 +65,7 @@ func TestVectorClock(t *testing.T) {
 	}
 }
 
-// TestCompareVectors tester vector comparison logik
+// Tester vector comparison logik
 func TestCompareVectors(t *testing.T) {
 	// Test: v1 < v2 (v1 happened before v2)
 	v1 := []int{1, 2, 3}
@@ -101,42 +94,33 @@ func TestCompareVectors(t *testing.T) {
 	}
 }
 
-// TestLamportHappenedBefore tester at Lamport respekterer happened-before relation
+// Tester  happened-before relation for Lamport
 func TestLamportHappenedBefore(t *testing.T) {
 	clock := NewLamportClock()
-	
-	// Event A
 	timeA := clock.LocalEvent()
-	
-	// Event B (efter A i samme proces)
 	timeB := clock.LocalEvent()
-	
-	// A happened before B, så timeA < timeB
 	if timeA >= timeB {
 		t.Errorf("A happened before B, men timeA=%d >= timeB=%d", timeA, timeB)
 	}
 }
 
-// TestVectorConcurrency tester at Vector clocks kan detektere concurrency
+// Test Vector clocks kan detektere concurrency
 func TestVectorConcurrency(t *testing.T) {
-	// To processer har local events uden at kommunikere
 	clock0 := NewVectorClock(2, 0)
 	clock1 := NewVectorClock(2, 1)
 	
 	// P0 har et event
 	vec0 := clock0.LocalEvent() // [1, 0]
-	
-	// P1 har et event (concurrent med P0)
+	// P1 har et event 
 	vec1 := clock1.LocalEvent() // [0, 1]
 	
-	// De skulle være concurrent
 	comparison := CompareVectors(vec0, vec1)
 	if comparison != 0 {
 		t.Errorf("P0[1,0] og P1[0,1] er concurrent, men comparison returnerede %d", comparison)
 	}
 }
 
-// TestVectorCausalRelation tester causal relationship
+// Tester causalitet
 func TestVectorCausalRelation(t *testing.T) {
 	clock0 := NewVectorClock(2, 0)
 	clock1 := NewVectorClock(2, 1)
@@ -154,7 +138,7 @@ func TestVectorCausalRelation(t *testing.T) {
 	}
 }
 
-// BenchmarkLamportLocalEvent benchmark for Lamport local events
+// Benchmark for Lamport local events
 func BenchmarkLamportLocalEvent(b *testing.B) {
 	clock := NewLamportClock()
 	for i := 0; i < b.N; i++ {
@@ -162,7 +146,7 @@ func BenchmarkLamportLocalEvent(b *testing.B) {
 	}
 }
 
-// BenchmarkLamportReceive benchmark for Lamport receive events
+// Benchmark for Lamport receive events
 func BenchmarkLamportReceive(b *testing.B) {
 	clock := NewLamportClock()
 	for i := 0; i < b.N; i++ {
@@ -170,7 +154,7 @@ func BenchmarkLamportReceive(b *testing.B) {
 	}
 }
 
-// BenchmarkVectorLocalEvent benchmark for Vector local events
+// Benchmark for Vector local events
 func BenchmarkVectorLocalEvent(b *testing.B) {
 	clock := NewVectorClock(10, 0)
 	for i := 0; i < b.N; i++ {
@@ -178,7 +162,7 @@ func BenchmarkVectorLocalEvent(b *testing.B) {
 	}
 }
 
-// BenchmarkVectorReceive benchmark for Vector receive events
+// Benchmark for Vector receive events
 func BenchmarkVectorReceive(b *testing.B) {
 	clock := NewVectorClock(10, 0)
 	mockVector := make([]int, 10)
@@ -187,7 +171,7 @@ func BenchmarkVectorReceive(b *testing.B) {
 	}
 }
 
-// BenchmarkCompareVectors benchmark for vector comparison
+// Benchmark for vector comparison
 func BenchmarkCompareVectors(b *testing.B) {
 	v1 := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	v2 := []int{2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
