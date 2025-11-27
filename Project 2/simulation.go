@@ -355,10 +355,6 @@ func (sim *Simulation) PrintRecentLogs(n int) {
 // DemonstrateConcurrentMessages viser hvordan Lamport og Vector clocks håndterer
 // concurrent message arrival - en kritisk situation hvor to beskeder sendes samtidigt
 func DemonstrateConcurrentMessages() {
-	fmt.Println("\n╔════════════════════════════════════════════════════════════════╗")
-	fmt.Println("║        Demo 3: Concurrent Message Arrival                      ║")
-	fmt.Println("╚════════════════════════════════════════════════════════════════╝")
-
 	fmt.Println("\nScenario:")
 	fmt.Println("  • 3 processer: P0, P1, P2")
 	fmt.Println("  • P1 og P2 udfører hver 5 local events")

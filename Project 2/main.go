@@ -45,9 +45,4 @@ func main() {
 	fmt.Println("\n\n=================================================")
 	fmt.Println("   SIMULATION COMPLETE")
 	fmt.Println("=================================================")
-	fmt.Println("\nKey Results:")
-	fmt.Println("  • Lamport: O(1) overhead, partial ordering")
-	fmt.Println("  • Vector:  O(n) overhead, total ordering + concurrency detection")
-	fmt.Println("\nFor detailed analysis and state-of-the-art comparison,")
-	fmt.Println("please refer to the README.md documentation.")
 }
